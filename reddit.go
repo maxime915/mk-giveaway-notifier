@@ -14,6 +14,7 @@ const (
 	subredditUrl = "/r/" + subreddit + "/new"
 )
 
+// TODO save mor data and embed RedditData into the Feed
 type RedditData struct {
 	Position string `json:"position"`
 }
@@ -65,7 +66,7 @@ func (f *Feed) produce() {
 	}
 
 	// send them in chronological order
-	for i := len(harvest.Posts); i >= 0; i-- {
+	for i := len(harvest.Posts) - 1; i >= 0; i-- {
 		f.Post <- harvest.Posts[i]
 	}
 
@@ -112,13 +113,12 @@ func (feed *Feed) Listen(postCallBack func(*reddit.Post)) error {
 	return nil
 }
 
-// channel polls reddit API for all post submitted after a given post, delay is
+// the Feed polls reddit API for all post submitted after a given post, delay is
 // not fixed.
-func channel() error {
+func example() {
 	feed, err := NewFeed()
 	if err != nil {
-		fmt.Println(err)
-		return err
+		panic(err)
 	}
 
 	counter := 0
@@ -127,8 +127,8 @@ func channel() error {
 		if _, ok := dict[post.ID]; ok {
 			fmt.Println("duplicated value : ", post.Title)
 		} else {
-			// created := time.Unix(int64(post.CreatedUTC), 0)
-			// fmt.Printf("(%3d) : %v, %s\n", counter, created.Format("Mon Jan 2 15:04:05 -0700 MST 2006"), post.Title)
+			created := time.Unix(int64(post.CreatedUTC), 0)
+			fmt.Printf("(%3d) : %v, %s\n", counter, created.Format("Mon Jan 2 15:04:05 -0700 MST 2006"), post.Title)
 			dict[post.ID] = struct{}{}
 		}
 		counter++
@@ -137,6 +137,4 @@ func channel() error {
 	for err := range feed.Errs {
 		fmt.Println("Failed to fetch "+subredditUrl+": ", err.Error())
 	}
-
-	return nil
 }
