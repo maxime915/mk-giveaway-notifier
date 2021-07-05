@@ -16,6 +16,7 @@ const (
 
 type Feed struct {
 	bot   reddit.Bot
+	Url   string
 	After string
 	Delay time.Duration
 	Post  chan *reddit.Post
@@ -35,6 +36,7 @@ func NewFeedAfter(postName string) (*Feed, error) {
 
 	feed := &Feed{
 		bot:   bot,
+		Url:   subredditUrl,
 		After: postName,
 		Delay: delay,
 		Post:  make(chan *reddit.Post, 110),
@@ -47,7 +49,7 @@ func NewFeedAfter(postName string) (*Feed, error) {
 }
 
 func (f *Feed) produce() {
-	harvest, err := f.bot.Listing(subredditUrl, f.After)
+	harvest, err := f.bot.Listing(f.Url, f.After)
 	if err != nil {
 		f.Errs <- err
 		f.Kill <- true
@@ -76,6 +78,30 @@ func (f *Feed) run() {
 			f.produce()
 		}
 	}
+}
+
+func (f *Feed) Close() error {
+	f.Kill <- true
+	return nil
+}
+
+func (feed *Feed) Listen(postCallBack func(*reddit.Post)) error {
+	feed, err := NewFeedAfter("")
+	if err != nil {
+		fmt.Println(err)
+		return err
+	}
+
+	for post := range feed.Post {
+		postCallBack(post)
+	}
+
+	// there will be at most one error because we exit right after
+	for err := range feed.Errs {
+		return err
+	}
+
+	return nil
 }
 
 // channel polls reddit API for all post submitted after a given post, delay is
