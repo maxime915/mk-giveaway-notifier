@@ -2,29 +2,35 @@ package main
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/turnage/graw"
 	"github.com/turnage/graw/reddit"
 	"github.com/turnage/graw/streams"
-	"time"
 )
 
 const (
 	delay        = 2 * time.Second
-	useChannel   = false
+	useChannel   = true
 	agentFile    = "reddit_agentfile"
-	subreddit    = "pics"
-	subredditUrl = "/r/" + subreddit
+	subreddit    = "askreddit"
+	subredditUrl = "/r/" + subreddit + "/new"
 )
 
 type Feed struct {
 	bot   reddit.Bot
-	after string
+	After string
+	Delay time.Duration
 	Post  chan *reddit.Post
 	Errs  chan error
 	Kill  chan bool
 }
 
 func NewFeed() (*Feed, error) {
+	return NewFeedAfter("")
+}
+
+func NewFeedAfter(postName string) (*Feed, error) {
 	bot, err := reddit.NewBotFromAgentFile(agentFile, delay)
 	if err != nil {
 		return nil, err
@@ -32,7 +38,8 @@ func NewFeed() (*Feed, error) {
 
 	feed := &Feed{
 		bot:   bot,
-		after: "",
+		After: postName,
+		Delay: delay,
 		Post:  make(chan *reddit.Post, 110),
 		Errs:  make(chan error, 1),
 		Kill:  make(chan bool, 1),
@@ -43,19 +50,22 @@ func NewFeed() (*Feed, error) {
 }
 
 func (f *Feed) produce() {
-	harvest, err := f.bot.Listing(subredditUrl, f.after)
+	harvest, err := f.bot.Listing(subredditUrl, f.After)
 	if err != nil {
 		f.Errs <- err
 		f.Kill <- true
 		return
 	}
 
-	for _, post := range harvest.Posts {
-		f.Post <- post
+	// send them in chronological order
+	for i := len(harvest.Posts); i >= 0; i-- {
+		f.Post <- harvest.Posts[i]
 	}
 
-	// update the reference point
-	f.after = harvest.Posts[len(harvest.Posts)-1].Name
+	// update reference if possible
+	if len(harvest.Posts) != 0 {
+		f.After = harvest.Posts[0].Name
+	}
 }
 
 func (f *Feed) run() {
@@ -65,7 +75,7 @@ func (f *Feed) run() {
 			close(f.Post)
 			close(f.Errs)
 			return
-		case <-time.After(delay):
+		case <-time.After(f.Delay):
 			f.produce()
 		}
 	}
@@ -121,8 +131,10 @@ func other() {
 	fmt.Println("graw run failed: ", wait())
 }
 
+// channel polls reddit API for all post submitted after a given post, delay is
+// not fixed.
 func channel() error {
-	feed, err := NewFeed()
+	feed, err := NewFeedAfter("")
 	if err != nil {
 		fmt.Println(err)
 		return err
@@ -131,10 +143,11 @@ func channel() error {
 	counter := 0
 	dict := map[string]struct{}{}
 	for post := range feed.Post {
-		fmt.Printf("(%d) : [%s] posted\n", counter, post.Author)
 		if _, ok := dict[post.ID]; ok {
-			fmt.Println("duplicated value : ", post.Author)
+			fmt.Println("duplicated value : ", post.Title)
 		} else {
+			// created := time.Unix(int64(post.CreatedUTC), 0)
+			// fmt.Printf("(%3d) : %v, %s\n", counter, created.Format("Mon Jan 2 15:04:05 -0700 MST 2006"), post.Title)
 			dict[post.ID] = struct{}{}
 		}
 		counter++
@@ -147,6 +160,8 @@ func channel() error {
 	return nil
 }
 
+// useStream hooks up to reddit and only notify on new post (submitted after
+// the hooks) & no delay configurable
 func useStream() {
 	bot, err := reddit.NewBotFromAgentFile(agentFile, 0)
 	if err != nil {
@@ -156,7 +171,7 @@ func useStream() {
 
 	kill := make(chan bool, 1)
 	errs := make(chan error, 1)
-	post, err := streams.Subreddits(bot, kill, errs, "askreddit", "news", "pics", "funny")
+	post, err := streams.Subreddits(bot, kill, errs, subreddit)
 	if err != nil {
 		fmt.Println("Failed to create stream: ", err)
 		return
@@ -173,11 +188,12 @@ func useStream() {
 			}
 			fmt.Println(p.Name)
 			if _, ok := track[p.ID]; ok {
-				fmt.Println("duplicated value : ", p.Author)
+				fmt.Println("duplicated post : ", p.Title)
+			} else {
+				fmt.Println("found post with title ", p.Title)
 			}
 			track[p.ID] = p.Name
-			fmt.Println("found ", len(track), " unique posts (so far)")
-			if len(track) > 300 {
+			if len(track) > 10 {
 				kill <- true
 				return
 			}
