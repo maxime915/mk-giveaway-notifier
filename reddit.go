@@ -14,6 +14,10 @@ const (
 	subredditUrl = "/r/" + subreddit + "/new"
 )
 
+type RedditData struct {
+	Position string `json:"position"`
+}
+
 type Feed struct {
 	bot   reddit.Bot
 	Url   string
@@ -25,10 +29,10 @@ type Feed struct {
 }
 
 func NewFeed() (*Feed, error) {
-	return NewFeedAfter("")
+	return NewFeedFromData(RedditData{""})
 }
 
-func NewFeedAfter(postName string) (*Feed, error) {
+func NewFeedFromData(data RedditData) (*Feed, error) {
 	bot, err := reddit.NewBotFromAgentFile(agentFile, delay)
 	if err != nil {
 		return nil, err
@@ -37,7 +41,7 @@ func NewFeedAfter(postName string) (*Feed, error) {
 	feed := &Feed{
 		bot:   bot,
 		Url:   subredditUrl,
-		After: postName,
+		After: data.Position,
 		Delay: delay,
 		Post:  make(chan *reddit.Post, 110),
 		Errs:  make(chan error, 1),
@@ -46,6 +50,10 @@ func NewFeedAfter(postName string) (*Feed, error) {
 
 	go feed.run()
 	return feed, nil
+}
+
+func (f *Feed) Update(data *RedditData) {
+	data.Position = f.After
 }
 
 func (f *Feed) produce() {
@@ -86,7 +94,7 @@ func (f *Feed) Close() error {
 }
 
 func (feed *Feed) Listen(postCallBack func(*reddit.Post)) error {
-	feed, err := NewFeedAfter("")
+	feed, err := NewFeed()
 	if err != nil {
 		fmt.Println(err)
 		return err
@@ -107,7 +115,7 @@ func (feed *Feed) Listen(postCallBack func(*reddit.Post)) error {
 // channel polls reddit API for all post submitted after a given post, delay is
 // not fixed.
 func channel() error {
-	feed, err := NewFeedAfter("")
+	feed, err := NewFeed()
 	if err != nil {
 		fmt.Println(err)
 		return err
