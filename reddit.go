@@ -8,6 +8,27 @@ import (
 	"github.com/turnage/graw/reddit"
 )
 
+/*FIXME
+there seems to be an issue where the saved name is no longer valid after an
+hibernation, hard to reproduce.
+could be:
+	- post deleted/removed
+	- some way that fullname is change in the reddit API
+	- something else ?
+*/
+
+/*FIXME
+if we are more than 200 posts behind
+e.g.
+0, 1, 2, ..., 100, 101, ..., 200, 201, ... Feed.After, ...
+post are not going to be sent in the correct order...
+*/
+
+/*FIXME
+what if the Feed.After was removed ?
+we would not get any more post...
+check via CreatedUTC seems a better option*/
+
 const (
 	delay        = 2 * time.Second
 	agentFile    = "reddit_agentfile"
@@ -92,11 +113,6 @@ func (f *Feed) run() {
 			f.produce()
 		}
 	}
-}
-
-func (f *Feed) Close() error {
-	f.Kill <- true
-	return nil
 }
 
 func (feed *Feed) Listen(postCallBack func(*reddit.Post)) error {
