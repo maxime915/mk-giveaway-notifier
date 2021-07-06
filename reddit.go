@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/turnage/graw/reddit"
@@ -111,6 +112,12 @@ func (feed *Feed) Listen(postCallBack func(*reddit.Post)) error {
 	}
 
 	return nil
+}
+
+// check for giveaway title (could be improved)
+func IsGiveAway(postTitle string) bool {
+	title := strings.ToLower(postTitle)
+	return strings.Contains(title, "giveaway")
 }
 
 // the Feed polls reddit API for all post submitted after a given post, delay is
