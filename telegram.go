@@ -81,7 +81,7 @@ func (b *TelegramNotifier) NotifyAll(post *reddit.Post) {
 	defer b.mutex.Unlock()
 
 	for chat := range b.Listeners {
-		b.Send(telebot.ChatID(chat), "you have been notified")
+		b.Send(telebot.ChatID(chat), "u/"+post.Author+" just posted "+post.Title+" in r/"+post.Subreddit)
 	}
 }
 
