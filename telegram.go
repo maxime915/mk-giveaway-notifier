@@ -14,7 +14,7 @@ type TelegramData struct {
 
 type TelegramNotifier struct {
 	*telebot.Bot
-	Listeners []int64
+	Listeners map[int64]struct{}
 	mutex     sync.Mutex
 }
 
@@ -28,13 +28,24 @@ func NewTelegramNotifier(data TelegramData) (*TelegramNotifier, error) {
 		return nil, err
 	}
 
-	return &TelegramNotifier{Bot: bot, Listeners: data.Listeners}, nil
+	tgBot := &TelegramNotifier{Bot: bot}
+	tgBot.Listeners = make(map[int64]struct{}, len(data.Listeners))
+	for _, l := range data.Listeners {
+		tgBot.Listeners[l] = struct{}{}
+	}
+
+	return tgBot, nil
 }
 
 func (b *TelegramNotifier) SaveListeners(data *TelegramData) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
-	data.Listeners = b.Listeners
+	data.Listeners = make([]int64, len(b.Listeners))
+	pos := 0
+	for chat := range b.Listeners {
+		data.Listeners[pos] = chat
+		pos++
+	}
 }
 
 // add one chat to the listeners, returns false if the chat is already listening
@@ -43,13 +54,24 @@ func (b *TelegramNotifier) addListeners(chatID int64) bool {
 	defer b.mutex.Unlock()
 
 	// avoid duplicate messages by keeping the list unique
-	for i := range b.Listeners {
-		if b.Listeners[i] == chatID {
-			return false
-		}
+	if _, ok := b.Listeners[chatID]; ok {
+		return false
 	}
 
-	b.Listeners = append(b.Listeners, chatID)
+	b.Listeners[chatID] = struct{}{}
+	return true
+}
+
+func (b *TelegramNotifier) removeListener(chatID int64) bool {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+
+	// make sure the key exist
+	if _, ok := b.Listeners[chatID]; !ok {
+		return false
+	}
+
+	delete(b.Listeners, chatID)
 	return true
 }
 
@@ -58,7 +80,7 @@ func (b *TelegramNotifier) NotifyAll(post *reddit.Post) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	for _, chat := range b.Listeners {
+	for chat := range b.Listeners {
 		b.Send(telebot.ChatID(chat), "you have been notified")
 	}
 }
@@ -80,7 +102,14 @@ func (b *TelegramNotifier) Launch() {
 		}
 	})
 
-	// TODO unsubscribe
+	b.Handle("/unsubscribe", func(m *telebot.Message) {
+		removed := b.removeListener(m.Chat.ID)
+		if removed {
+			b.Send(m.Sender, "You are no longer receiving update")
+		} else {
+			b.Send(m.Sender, "You are not registered yet")
+		}
+	})
 
 	b.Handle("/kill", func(m *telebot.Message) {
 		b.Send(m.Sender, "where were u wen club penguin die\ni was at house eating dorito when phone ring\n\"Club penguin is kil\"\n\"no\"")
