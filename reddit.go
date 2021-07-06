@@ -78,13 +78,17 @@ func (f *Feed) produce() {
 }
 
 func (f *Feed) run() {
+	f.produce()
+	ticker := time.NewTicker(delay)
+
 	for {
 		select {
 		case <-f.Kill:
 			close(f.Post)
 			close(f.Errs)
+			ticker.Stop()
 			return
-		case <-time.After(f.Delay):
+		case <-ticker.C:
 			f.produce()
 		}
 	}
