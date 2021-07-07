@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,6 +31,7 @@ we would not get any more post...
 check via CreatedUTC seems a better option*/
 
 const (
+	minDelay     = 2 * time.Second
 	delay        = 2 * time.Second
 	agentFile    = "reddit_agentfile"
 	subreddit    = "askreddit"
@@ -132,6 +134,54 @@ func (feed *Feed) Listen(postCallBack func(*reddit.Post)) error {
 	}
 
 	return nil
+}
+
+/*crawler approach
+- store most-recent UTC in JSON
+- start by crawling back to the saved point (fetching all post up to that)
+- then store the most-recent UTC in the structure
+- repeat =)*/
+
+// TODO use a RateLimiter
+
+// If if fails up to the very first one, should we re-try ?
+func (feed *Feed) crawlBackTo(date uint64) ([]*reddit.Post, error) {
+	// fetch at least once
+	harvest, err := feed.bot.Listing(feed.Url, "")
+	if err != nil {
+		return nil, err
+	}
+
+	ticker := time.NewTicker(minDelay)
+	result := harvest.Posts
+
+	for result[len(result)-1].CreatedUTC < date {
+		<-ticker.C
+		harvest, err := feed.bot.ListingWithParams(feed.Url, map[string]string{
+			"after": result[len(result)-1].Name,
+		})
+		if err != nil {
+			return nil, err
+		}
+
+		// if the last loaded post was deleted reddit returns an empty list
+		// -> drop the deleted post and re-try
+		if len(harvest.Posts) == 0 {
+			if len(result) == 0 {
+				return nil, fmt.Errorf("could not load any post")
+			}
+			result = result[:len(result)-1]
+			continue
+		}
+
+		result = append(result, harvest.Posts...)
+	}
+
+	bound := sort.Search(len(result), func(i int) bool {
+		return result[i].CreatedUTC >= date
+	})
+
+	return result[:bound], nil
 }
 
 // check for giveaway title (could be improved)
