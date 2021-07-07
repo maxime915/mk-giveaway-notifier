@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/maxime915/mk-giveaway-notifier/ratelimiter"
 	"sort"
 	"strings"
 	"time"
@@ -51,6 +52,7 @@ type Feed struct {
 	Post  chan *reddit.Post
 	Errs  chan error
 	Kill  chan bool
+	rate  ratelimiter.RateLimiter
 }
 
 func NewFeed() (*Feed, error) {
@@ -71,6 +73,7 @@ func NewFeedFromData(data RedditData) (*Feed, error) {
 		Post:  make(chan *reddit.Post, 110),
 		Errs:  make(chan error, 1),
 		Kill:  make(chan bool, 1),
+		rate:  ratelimiter.NewRateLimiter(60, time.Minute),
 	}
 
 	go feed.run()
@@ -82,6 +85,12 @@ func (f *Feed) Update(data *RedditData) {
 }
 
 func (f *Feed) produce() {
+	if !f.rate.Book() {
+		f.Errs <- fmt.Errorf("could not book an slot")
+		f.Kill <- true
+		return
+	}
+
 	harvest, err := f.bot.Listing(f.Url, f.After)
 	if err != nil {
 		f.Errs <- err
@@ -142,21 +151,23 @@ func (feed *Feed) Listen(postCallBack func(*reddit.Post)) error {
 - then store the most-recent UTC in the structure
 - repeat =)*/
 
-// TODO use a RateLimiter
-
 // If if fails up to the very first one, should we re-try ?
 func (feed *Feed) crawlBackTo(date uint64) ([]*reddit.Post, error) {
+	if !feed.rate.Book() {
+		return nil, fmt.Errorf("could not book an slot")
+	}
 	// fetch at least once
 	harvest, err := feed.bot.Listing(feed.Url, "")
 	if err != nil {
 		return nil, err
 	}
 
-	ticker := time.NewTicker(minDelay)
 	result := harvest.Posts
 
 	for result[len(result)-1].CreatedUTC < date {
-		<-ticker.C
+		if !feed.rate.Book() {
+			return nil, fmt.Errorf("could not book an slot")
+		}
 		harvest, err := feed.bot.ListingWithParams(feed.Url, map[string]string{
 			"after": result[len(result)-1].Name,
 		})
