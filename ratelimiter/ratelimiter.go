@@ -4,49 +4,52 @@ import (
 	"time"
 )
 
-// RateLimiter synchronization mechanism to avoid going over the limit of an API.
-// Concurrent call to Book return in an unspecified order.
+// RateLimiter synchronization mechanism to limit access to a resource over time.
+// Only a certain amount of call to Book will be made in a given amount of time,
+// any additional attemp will block to avoid overrusing the resource and will
+// only resume after the time has passed.
 type RateLimiter interface {
-	// Book blocks to reserve a slot, returns false if the RateLimiter was stopped
+	// Book blocks to reserve a call, returns false if the RateLimiter was stopped.
+	// Concurrent calls to Book return in an unspecified order.
 	Book() bool
-	// Stop prevents the reservation of new slot
+	// Stop prevents the reservation of new call.
 	Stop()
 }
 
 type rateLimiter struct {
-	interval  time.Duration // should stay const
-	frequency int           // should stay const
-	slot      chan chan struct{}
-	kill      chan struct{}
-	done      chan struct{}
+	order chan struct{}
+	grant chan struct{}
+
+	kill chan struct{}
+	done chan struct{} // read-only-when-closed channel
 }
 
-// NewRateLimiter creates a safe-to-copy RateLimiter, panic if frequency or interval < 1
-func NewRateLimiter(frequency int, interval time.Duration) RateLimiter {
-	if frequency < 1 {
-		panic("invalid frequency")
+// NewRateLimiter creates a safe-to-copy RateLimiter,
+// panic if count or interval < 1
+func NewRateLimiter(count int, interval time.Duration) RateLimiter {
+	if count < 1 {
+		panic("invalid count")
 	}
 	if interval < 1 {
 		panic("invalid interval")
 	}
 
 	limiter := &rateLimiter{
-		interval:  interval,
-		frequency: frequency,
-		slot:      make(chan chan struct{}, frequency),
-		kill:      make(chan struct{}, 1),
-		done:      make(chan struct{}, 0),
+		order: make(chan struct{}, count),
+		grant: make(chan struct{}, count),
+		kill:  make(chan struct{}, 1),
+		done:  make(chan struct{}, 0),
 	}
 
-	go limiter.run()
+	go limiter.run(count, interval)
 	return limiter
 }
 
-func (limiter *rateLimiter) run() {
-	ticker := time.NewTicker(limiter.interval)
-	available := limiter.frequency
+func (limiter *rateLimiter) run(count int, interval time.Duration) {
+	ticker := time.NewTicker(interval)
 
-	pending := make(chan chan struct{}, limiter.frequency)
+	available := count
+	pending := 0
 
 	for {
 		select {
@@ -55,28 +58,27 @@ func (limiter *rateLimiter) run() {
 			ticker.Stop()
 			return
 		case <-ticker.C:
-			available = limiter.frequency
-			for ; available > 0 && len(pending) > 0; available-- {
-				channel := <-pending
-				channel <- struct{}{}
+			available = count
+			for available > 0 && pending > 0 {
+				limiter.grant <- struct{}{}
+				available--
+				pending--
 			}
-		case channel := <-limiter.slot:
-			if available == 0 {
-				pending <- channel
+		case <-limiter.order:
+			if available != 0 {
+				limiter.grant <- struct{}{}
+				available--
 			} else {
-				channel <- struct{}{}
-				available -= 1
+				pending++
 			}
 		}
 	}
 }
 
 func (limiter *rateLimiter) Book() bool {
-	channel := make(chan struct{}, 1)
-	limiter.slot <- channel
-
+	limiter.order <- struct{}{}
 	select {
-	case <-channel:
+	case <-limiter.grant:
 		return true
 	case <-limiter.done:
 		return false
