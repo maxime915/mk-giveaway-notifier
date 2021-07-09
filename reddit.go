@@ -2,147 +2,83 @@ package main
 
 import (
 	"fmt"
-	"github.com/maxime915/mk-giveaway-notifier/ratelimiter"
 	"sort"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/maxime915/mk-giveaway-notifier/ratelimiter"
 
 	"github.com/turnage/graw/reddit"
 )
 
-/*FIXME
-there seems to be an issue where the saved name is no longer valid after an
-hibernation, hard to reproduce.
-could be:
-	- post deleted/removed
-	- some way that fullname is change in the reddit API
-	- something else ?
-*/
-
-/*FIXME
-if we are more than 200 posts behind
-e.g.
-0, 1, 2, ..., 100, 101, ..., 200, 201, ... Feed.After, ...
-post are not going to be sent in the correct order...
-*/
-
-/*FIXME
-what if the Feed.After was removed ?
-we would not get any more post...
-check via CreatedUTC seems a better option*/
-
 const (
-	minDelay     = 2 * time.Second
-	delay        = 2 * time.Second
-	agentFile    = "reddit_agentfile"
-	subreddit    = "askreddit"
-	subredditUrl = "/r/" + subreddit + "/new"
+	delay     = 2 * time.Second
+	agentFile = "reddit_agentfile"
 )
 
-// TODO save mor data and embed RedditData into the Feed
+// RedditData stores persistent data
 type RedditData struct {
-	Position string `json:"position"`
+	Subreddit   string        `json:"subreddit"`
+	PositionUTC uint64        `json:"position"`
+	Delay       time.Duration `json:"delay"`
 }
 
+// Feed offers a way to receive new posts
 type Feed struct {
-	bot   reddit.Bot
-	Url   string
-	After string
-	Delay time.Duration
-	Post  chan *reddit.Post
-	Errs  chan error
-	Kill  chan bool
-	rate  ratelimiter.RateLimiter
+	RedditData
+	bot  reddit.Bot
+	Url  string
+	Post chan *reddit.Post
+	Errs chan error
+	Kill chan bool
+	rate ratelimiter.RateLimiter
+	mut  *sync.Mutex
 }
 
-func NewFeed() (*Feed, error) {
-	return NewFeedFromData(RedditData{""})
-}
+type Post = reddit.Post
 
 func NewFeedFromData(data RedditData) (*Feed, error) {
-	bot, err := reddit.NewBotFromAgentFile(agentFile, delay)
+	bot, err := reddit.NewBotFromAgentFile(agentFile, data.Delay)
 	if err != nil {
 		return nil, err
 	}
 
 	feed := &Feed{
-		bot:   bot,
-		Url:   subredditUrl,
-		After: data.Position,
-		Delay: delay,
-		Post:  make(chan *reddit.Post, 110),
-		Errs:  make(chan error, 1),
-		Kill:  make(chan bool, 1),
-		rate:  ratelimiter.NewRateLimiter(60, time.Minute),
+		RedditData: data,
+		bot:        bot,
+		Url:        "/r/" + data.Subreddit + "/new",
+		Post:       make(chan *reddit.Post, 110),
+		Errs:       make(chan error, 1),
+		Kill:       make(chan bool, 1),
+		rate:       ratelimiter.NewRateLimiter(60, time.Minute),
+		mut:        &sync.Mutex{},
 	}
 
 	go feed.run()
 	return feed, nil
 }
 
-func (f *Feed) Update(data *RedditData) {
-	data.Position = f.After
+func (feed *Feed) Update(data *RedditData) {
+	*data = feed.RedditData
 }
 
-func (f *Feed) produce() {
-	if !f.rate.Book() {
-		f.Errs <- fmt.Errorf("could not book an slot")
-		f.Kill <- true
-		return
+func (feed *Feed) abort(err error) {
+	feed.Errs <- err
+	feed.Kill <- true
+}
+
+func (feed *Feed) fetchNewest() ([]*reddit.Post, error) {
+	if !feed.rate.Book() {
+		return nil, fmt.Errorf("could not book an slot")
 	}
 
-	harvest, err := f.bot.Listing(f.Url, f.After)
+	harvest, err := feed.bot.Listing(feed.Url, "")
 	if err != nil {
-		f.Errs <- err
-		f.Kill <- true
-		return
+		return nil, err
 	}
 
-	// send them in chronological order
-	for i := len(harvest.Posts) - 1; i >= 0; i-- {
-		f.Post <- harvest.Posts[i]
-	}
-
-	// update reference if possible
-	if len(harvest.Posts) != 0 {
-		f.After = harvest.Posts[0].Name
-	}
-}
-
-func (f *Feed) run() {
-	f.produce()
-	ticker := time.NewTicker(delay)
-
-	for {
-		select {
-		case <-f.Kill:
-			close(f.Post)
-			close(f.Errs)
-			ticker.Stop()
-			return
-		case <-ticker.C:
-			f.produce()
-		}
-	}
-}
-
-func (feed *Feed) Listen(postCallBack func(*reddit.Post)) error {
-	feed, err := NewFeed()
-	if err != nil {
-		fmt.Println(err)
-		return err
-	}
-
-	for post := range feed.Post {
-		postCallBack(post)
-	}
-
-	// there will be at most one error because we exit right after
-	for err := range feed.Errs {
-		return err
-	}
-
-	return nil
+	return harvest.Posts, nil
 }
 
 /*crawler approach
@@ -153,18 +89,16 @@ func (feed *Feed) Listen(postCallBack func(*reddit.Post)) error {
 
 // If if fails up to the very first one, should we re-try ?
 func (feed *Feed) crawlBackTo(date uint64) ([]*reddit.Post, error) {
-	if !feed.rate.Book() {
-		return nil, fmt.Errorf("could not book an slot")
-	}
+	// NB: result[...].CreatedUTC is not necessarily sorted
+
 	// fetch at least once
-	harvest, err := feed.bot.Listing(feed.Url, "")
+	result, err := feed.fetchNewest()
 	if err != nil {
 		return nil, err
 	}
 
-	result := harvest.Posts
+	for result[len(result)-1].CreatedUTC > date {
 
-	for result[len(result)-1].CreatedUTC < date {
 		if !feed.rate.Book() {
 			return nil, fmt.Errorf("could not book an slot")
 		}
@@ -189,40 +123,66 @@ func (feed *Feed) crawlBackTo(date uint64) ([]*reddit.Post, error) {
 	}
 
 	bound := sort.Search(len(result), func(i int) bool {
-		return result[i].CreatedUTC >= date
+		return result[i].CreatedUTC < date
 	})
 
 	return result[:bound], nil
 }
 
-// check for giveaway title (could be improved)
+func (feed *Feed) produce() {
+	var result []*Post
+	var err error
+
+	if feed.PositionUTC != 0 {
+		result, err = feed.crawlBackTo(feed.PositionUTC)
+	} else {
+		result, err = feed.fetchNewest()
+	}
+
+	if err != nil {
+		feed.abort(err)
+		return
+	}
+
+	for _, post := range result {
+		feed.Post <- post
+	}
+
+	feed.PositionUTC = result[0].CreatedUTC
+}
+
+func (feed *Feed) run() {
+	feed.produce()
+	ticker := time.NewTicker(feed.Delay)
+
+	for {
+		select {
+		case <-feed.Kill:
+			close(feed.Post)
+			close(feed.Errs)
+			ticker.Stop()
+			return
+		case <-ticker.C:
+			feed.produce()
+		}
+	}
+}
+
+func (feed *Feed) Listen(postCallBack func(*reddit.Post)) error {
+	for post := range feed.Post {
+		postCallBack(post)
+	}
+
+	// there will be at most one error because we exit right after
+	for err := range feed.Errs {
+		return err
+	}
+
+	return nil
+}
+
+// IsGiveAway checks for giveaway title (could be improved)
 func IsGiveAway(postTitle string) bool {
 	title := strings.ToLower(postTitle)
 	return strings.Contains(title, "giveaway")
-}
-
-// the Feed polls reddit API for all post submitted after a given post, delay is
-// not fixed.
-func example() {
-	feed, err := NewFeed()
-	if err != nil {
-		panic(err)
-	}
-
-	counter := 0
-	dict := map[string]struct{}{}
-	for post := range feed.Post {
-		if _, ok := dict[post.ID]; ok {
-			fmt.Println("duplicated value : ", post.Title)
-		} else {
-			created := time.Unix(int64(post.CreatedUTC), 0)
-			fmt.Printf("(%3d) : %v, %s\n", counter, created.Format("Mon Jan 2 15:04:05 -0700 MST 2006"), post.Title)
-			dict[post.ID] = struct{}{}
-		}
-		counter++
-	}
-
-	for err := range feed.Errs {
-		fmt.Println("Failed to fetch "+subredditUrl+": ", err.Error())
-	}
 }
