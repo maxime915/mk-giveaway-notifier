@@ -14,8 +14,9 @@ type TelegramData struct {
 
 type TelegramNotifier struct {
 	*telebot.Bot
-	Listeners map[int64]struct{}
+	listeners map[int64]struct{}
 	mutex     sync.Mutex
+	Done      chan struct{}
 }
 
 func NewTelegramNotifier(data TelegramData) (*TelegramNotifier, error) {
@@ -28,10 +29,14 @@ func NewTelegramNotifier(data TelegramData) (*TelegramNotifier, error) {
 		return nil, err
 	}
 
-	tgBot := &TelegramNotifier{Bot: bot}
-	tgBot.Listeners = make(map[int64]struct{}, len(data.Listeners))
+	tgBot := &TelegramNotifier{
+		Bot:       bot,
+		listeners: make(map[int64]struct{}, len(data.Listeners)),
+		Done:      make(chan struct{}), // dead channel
+	}
+
 	for _, l := range data.Listeners {
-		tgBot.Listeners[l] = struct{}{}
+		tgBot.listeners[l] = struct{}{}
 	}
 
 	return tgBot, nil
@@ -40,9 +45,9 @@ func NewTelegramNotifier(data TelegramData) (*TelegramNotifier, error) {
 func (b *TelegramNotifier) SaveListeners(data *TelegramData) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
-	data.Listeners = make([]int64, len(b.Listeners))
+	data.Listeners = make([]int64, len(b.listeners))
 	pos := 0
-	for chat := range b.Listeners {
+	for chat := range b.listeners {
 		data.Listeners[pos] = chat
 		pos++
 	}
@@ -54,11 +59,11 @@ func (b *TelegramNotifier) addListeners(chatID int64) bool {
 	defer b.mutex.Unlock()
 
 	// avoid duplicate messages by keeping the list unique
-	if _, ok := b.Listeners[chatID]; ok {
+	if _, ok := b.listeners[chatID]; ok {
 		return false
 	}
 
-	b.Listeners[chatID] = struct{}{}
+	b.listeners[chatID] = struct{}{}
 	return true
 }
 
@@ -67,11 +72,11 @@ func (b *TelegramNotifier) removeListener(chatID int64) bool {
 	defer b.mutex.Unlock()
 
 	// make sure the key exist
-	if _, ok := b.Listeners[chatID]; !ok {
+	if _, ok := b.listeners[chatID]; !ok {
 		return false
 	}
 
-	delete(b.Listeners, chatID)
+	delete(b.listeners, chatID)
 	return true
 }
 
@@ -80,9 +85,14 @@ func (b *TelegramNotifier) NotifyAll(post *reddit.Post) {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	for chat := range b.Listeners {
+	for chat := range b.listeners {
 		b.Send(telebot.ChatID(chat), "u/"+post.Author+" just posted "+post.Title+" in r/"+post.Subreddit)
 	}
+}
+
+func (b *TelegramNotifier) Stop() {
+	b.Bot.Stop()
+	close(b.Done)
 }
 
 func (b *TelegramNotifier) Launch() {
@@ -113,6 +123,10 @@ func (b *TelegramNotifier) Launch() {
 
 	b.Handle("/kill", func(m *telebot.Message) {
 		b.Send(m.Sender, "where were u wen club penguin die\ni was at house eating dorito when phone ring\n\"Club penguin is kil\"\n\"no\"")
+		b.Stop()
+	})
+
+	b.Handle("K", func(m *telebot.Message) {
 		b.Stop()
 	})
 

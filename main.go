@@ -39,12 +39,18 @@ func main() {
 	}
 
 	go func() {
-		for post := range feed.Post {
-			telegram.NotifyAll(post)
-		}
-
-		for err := range feed.Errs {
-			fmt.Println(err)
+		for {
+			select {
+			case post := <-feed.Post:
+				telegram.NotifyAll(post)
+			case e := <-feed.Errs:
+				log.Fatal("reddit feed got an error: ", e)
+				telegram.Stop()
+				return
+			case <-telegram.Done:
+				feed.Kill <- true
+				return
+			}
 		}
 	}()
 
@@ -55,5 +61,13 @@ func main() {
 	feed.Update(&state.RedditData)
 
 	data, err = json.Marshal(state)
+	if err != nil {
+		fmt.Printf("could not save state %+v\n", state)
+		return
+	}
 	err = os.WriteFile(dataPath, data, os.ModePerm)
+
+	if err != nil {
+		fmt.Printf("could not save state %+v\n", state)
+	}
 }
