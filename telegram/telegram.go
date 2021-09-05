@@ -90,6 +90,7 @@ func LoadTelegramNotifierWithBot(path string, rbot *reddit.Bot) (*TelegramNotifi
 	return tgBot, nil
 }
 
+// String represent the current state of the TelegramNotifier
 func (tn *TelegramNotifier) String() string {
 	return fmt.Sprintf("%+v", tn.savedState)
 }

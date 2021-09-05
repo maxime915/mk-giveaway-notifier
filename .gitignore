@@ -8,7 +8,7 @@
 *.dll
 *.so
 *.dylib
-mk-giveaway-notifier
+/start-bot
 
 # Test binary, built with `go test -c`
 *.test
@@ -20,4 +20,4 @@ mk-giveaway-notifier
 # vendor/
 
 # IDE
-.idea/*
+.idea*
