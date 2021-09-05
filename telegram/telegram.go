@@ -15,31 +15,38 @@ import (
 // default sub an user is subscribed to
 const subbredit = "MechanicalKeyboards"
 
+// savedState represent a configuration of the bot
 type savedState struct {
 	Token     string                 `json:"token"`
 	Listeners map[int64]*reddit.Feed `json:"listener"`
 }
 
+// TelegramNotifier
 type TelegramNotifier struct {
 	*telegram.Bot
 	redditBot *reddit.Bot
 	savedState
 	mutex *sync.Mutex
-	Done  chan struct{}
+	done  chan struct{}
 }
 
+// newEmptyBot returns a new empty bot with valid mutex/done/Listeners using
+// the default configuration to talk with reddit API.
 func newEmptyBot() *TelegramNotifier {
 	return &TelegramNotifier{
 		savedState: savedState{Listeners: make(map[int64]*reddit.Feed)},
 		mutex:      &sync.Mutex{},
-		Done:       make(chan struct{}), // dead channel
+		done:       make(chan struct{}), // dead channel
 	}
 }
 
+// NewTelegramNotifier returns a valid TelegramNotifier with the given token
 func NewTelegramNotifier(Token string) (*TelegramNotifier, error) {
 	return NewTelegramNotifierWithBot(Token, reddit.DefaultBot())
 }
 
+// NewTelegramNotifierWithBot returns a valid TelegramNotifier with the given token
+// and using the given bot to call the reddit API.
 func NewTelegramNotifierWithBot(Token string, rbot *reddit.Bot) (*TelegramNotifier, error) {
 	bot, err := telegram.NewBot(telegram.Settings{
 		Token:  Token,
@@ -58,10 +65,14 @@ func NewTelegramNotifierWithBot(Token string, rbot *reddit.Bot) (*TelegramNotifi
 	return tgBot, nil
 }
 
+// LoadTelegramNotifier creates a bot from the configuration file using the default
+// bot to communicate with reddit API.
 func LoadTelegramNotifier(path string) (*TelegramNotifier, error) {
 	return LoadTelegramNotifierWithBot(path, reddit.DefaultBot())
 }
 
+// LoadTelegramNotifierWithBot creates a bot from the configuration file using
+// the given bot to communicate with reddit AOU
 func LoadTelegramNotifierWithBot(path string, rbot *reddit.Bot) (*TelegramNotifier, error) {
 	tgBot := newEmptyBot()
 
@@ -95,6 +106,7 @@ func (tn *TelegramNotifier) String() string {
 	return fmt.Sprintf("%+v", tn.savedState)
 }
 
+// SaveTo prints the configuration of the TelegramNotifier to a file
 func (tn *TelegramNotifier) SaveTo(path string) error {
 	data, err := json.Marshal(tn.savedState)
 	if err != nil {
@@ -118,6 +130,7 @@ func (b *TelegramNotifier) addListeners(chatID int64, feed *reddit.Feed) bool {
 	return true
 }
 
+// remove on chat from the listeners, returns false if chat was not listening
 func (b *TelegramNotifier) removeListener(chatID int64) bool {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
@@ -131,20 +144,40 @@ func (b *TelegramNotifier) removeListener(chatID int64) bool {
 	return true
 }
 
+// Stop makes the bot stop listening to Telegram API. Ongoing requests will continue
+// processing.
 func (b *TelegramNotifier) Stop() {
 	b.Bot.Stop()
-	close(b.Done)
+	close(b.done)
+}
+
+// IsKilled returns true if the TelegramNotifier won't start any new processing
+func (b *TelegramNotifier) IsKilled() bool {
+	_, open := <-b.done
+	return !open
+}
+
+// BlockUntilKilled wait until the TelegramNotifier receives a Stop() call, either
+// via the function or via a Telegram message.
+func (b *TelegramNotifier) BlockUntilKilled() {
+	<-b.done
 }
 
 func isGiveaway(title string) bool {
 	return strings.Contains(strings.ToLower(title), "giveaway")
 }
 
-func (b *TelegramNotifier) FetchPosts(m *telegram.Message, fetcher func(*reddit.Feed) ([]*reddit.Post, error)) {
-	b.FetchPostsAndFilter(m, isGiveaway, fetcher)
+// replyFetchedPosts
+func (b *TelegramNotifier) replyFetchedPosts(m *telegram.Message, fetcher func(*reddit.Feed) ([]*reddit.Post, error)) {
+	b.replyFilteredFetchedPosts(m, isGiveaway, fetcher)
 }
 
-func (b *TelegramNotifier) FetchPostsAndFilter(m *telegram.Message, predicate func(string) bool, fetcher func(*reddit.Feed) ([]*reddit.Post, error)) {
+// replyFilteredFetchedPosts creates a reply to the Sender of `m` using posts from
+// `fetched` and filtering them via `filter`. Posts included are the one for which's
+// filter(post) is true.
+// The reply is split into a message per post and a confirmation reply. Each post
+// is formatted to show the title, the author and give a permalink.
+func (b *TelegramNotifier) replyFilteredFetchedPosts(m *telegram.Message, filter func(string) bool, fetcher func(*reddit.Feed) ([]*reddit.Post, error)) {
 	b.Notify(m.Sender, telegram.Typing)
 
 	feed, ok := b.Listeners[m.Chat.ID]
@@ -165,7 +198,7 @@ func (b *TelegramNotifier) FetchPostsAndFilter(m *telegram.Message, predicate fu
 	}
 
 	for _, post := range posts {
-		if !predicate(post.Title) {
+		if !filter(post.Title) {
 			continue
 		}
 		b.Send(m.Sender, fmt.Sprintf(
@@ -179,10 +212,13 @@ func (b *TelegramNotifier) FetchPostsAndFilter(m *telegram.Message, predicate fu
 	b.Send(m.Sender, "And that's it for now!")
 }
 
-// TODO handle errors
+// Launch starts the bot and blocks until Stop() is called or the bot
+// receives a message requesting halt.
 func (b *TelegramNotifier) Launch() error {
+	// TODO handle errors
 
-	b.Handle("/hello", func(m *telegram.Message) {
+	b.Handle("/ping", func(m *telegram.Message) {
+		b.Notify(m.Sender, telegram.Typing)
 		b.Send(m.Sender, "Hello World!")
 	})
 
@@ -215,8 +251,8 @@ func (b *TelegramNotifier) Launch() error {
 	})
 
 	b.Handle("/kill", func(m *telegram.Message) {
-		b.Send(m.Sender, "where were u wen club penguin die\ni was at house eating dorito when phone ring\n\"Club penguin is kil\"\n\"no\"")
-		// b.Stop()
+		b.Delete(m)
+		b.Stop()
 	})
 
 	b.Handle("K", func(m *telegram.Message) {
@@ -242,15 +278,15 @@ func (b *TelegramNotifier) Launch() error {
 	})
 
 	b.Handle("/update", func(m *telegram.Message) {
-		b.FetchPosts(m, b.redditBot.Update)
+		b.replyFetchedPosts(m, b.redditBot.Update)
 	})
 
 	b.Handle("/peek", func(m *telegram.Message) {
-		b.FetchPosts(m, b.redditBot.Peek)
+		b.replyFetchedPosts(m, b.redditBot.Peek)
 	})
 
 	b.Handle("/poll", func(m *telegram.Message) {
-		b.Send(m.Sender, "got:"+m.Text)
+		b.Send(m.Sender, "unsupported yet")
 	})
 
 	b.Handle(telegram.OnText, func(m *telegram.Message) {

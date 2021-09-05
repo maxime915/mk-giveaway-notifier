@@ -11,10 +11,15 @@ import (
 
 var defaultBot *Bot = NewRedditBot()
 
+// DefaultBot returns a bot without any login information.
+// The rate of this bot will be limited to 300 requests / 10min per
+// Reddit's API.
+// The pointer returned by this function does not change.
 func DefaultBot() *Bot {
 	return defaultBot
 }
 
+// Post represent a reddit post with Title, Author, etc
 type Post = reddit.Post
 
 // Position stores the name and creation date of a reddit post
@@ -26,7 +31,7 @@ type Position struct {
 
 // Anchor is a slice of FeedPosition that follow each other
 // it adds information in case one or more posts would be deleted.
-// Order should be the same as the r/.../new page.
+// Lower index means newer position.
 type Anchor = []Position
 
 // Feed represent a list of subreddit to fetch (by /new) and a reference in
@@ -38,7 +43,9 @@ type Feed struct {
 	Subreddits string `json:"url"`
 }
 
-// NewRedditBot creates a reddit API handles without any loggin
+// NewRedditBot creates a reddit API handles without any login information.
+// The rate of this bot will be limited to 300 requests / 10min per
+// Reddit's API.
 func NewRedditBot() *Bot {
 	// will not fail without argument
 	client, _ := reddit.NewReadonlyClient()
@@ -54,6 +61,7 @@ type Bot struct {
 	ratelimiter *ratelimiter
 }
 
+// newPosts fetches new posts using the rate limiter
 func (bot Bot) newPosts(subreddit, before, after string, limit int) ([]*reddit.Post, error) {
 	bot.ratelimiter.Book()
 
@@ -73,7 +81,8 @@ func (bot Bot) newPosts(subreddit, before, after string, limit int) ([]*reddit.P
 	return posts, nil
 }
 
-func (bot Bot) getPost(id string) ([]*reddit.Post, error) {
+// getPost fetches the information of 1 post
+func (bot Bot) getPost(id string) (*reddit.Post, error) {
 	bot.ratelimiter.Book()
 
 	posts, resp, err := bot.client.Listings.GetPosts(context.Background(), id)
@@ -89,35 +98,58 @@ func (bot Bot) getPost(id string) ([]*reddit.Post, error) {
 		return nil, fmt.Errorf("expected 1 post for getPost(%s)", id)
 	}
 
-	return posts, err
+	return posts[0], err
 }
 
+// checkPosition makes sure the position points to a valid, non-deleted post
 func (bot *Bot) checkPosition(postion Position) bool {
-	posts, err := bot.getPost(postion.FullID)
+	post, err := bot.getPost(postion.FullID)
 
 	if err != nil {
 		return false
 	}
 
-	return posts[0].Author != "[deleted]"
+	return post.Author != "[deleted]"
 }
 
-// NewFeed creates a new Feed referencing the newest posts of the subreddits
+// NewFeed creates a new Feed of a list of subreddits
+// The Feed is then Touch'ed automatically by the Bot to create
+// a valid anchor. Calling Bot.Peek(*Feed) or Bot.Update(*Feed) right
+// after creation might return an empty list if the sub isn't very active.
 func (bot *Bot) NewFeed(subreddits ...string) (*Feed, error) {
+	if len(subreddits) < 1 {
+		return nil, fmt.Errorf("at least 1 subreddit is required to create a Feed")
+	}
+
 	feed := &Feed{Subreddits: strings.Join(subreddits, "+")}
+
 	err := bot.Touch(feed)
 	if err != nil {
 		return nil, err
 	}
+
 	return feed, nil
 }
 
+// Touch sets the anchor of the feed to the most recents posts of the sub
 func (bot *Bot) Touch(feed *Feed) error {
-	// 3 posts for the anchor is a safe measure
-	posts, err := bot.newPosts(feed.Subreddits, "", "", 3)
+	size := 3
+	if cap(feed.Anchor) > size {
+		size = cap(feed.Anchor)
+	}
+
+	// `size` posts for the anchor is a safe measure
+	posts, err := bot.newPosts(feed.Subreddits, "", "", size)
 	if err != nil {
 		return err
 	}
+
+	if len(posts) < 1 {
+		return fmt.Errorf("not enough posts found in the feed, aborting")
+	}
+
+	// if len(posts) < size
+	// failing is not helping
 
 	// copy the value in the anchor
 	feed.Anchor = make([]Position, len(posts))
@@ -129,10 +161,10 @@ func (bot *Bot) Touch(feed *Feed) error {
 	return nil
 }
 
-// Peek fetches the reddit API
-// Order: lowest index is most recent
-// May return empty list without error
-// feed.Anchor must have at least one element (see bot.Touch(*Feed))
+// Peek fetches the reddit API to retrieve all posts newer than the feed's anchor.
+// Feed.Anchor must have at least one element. See bot.Touch(*Feed) .
+// The returned posts are returned in newest-first order. This function may return
+// an empty list without error.
 func (bot *Bot) Peek(feed *Feed) ([]*reddit.Post, error) {
 	// if no anchor available, impossible to have a reference in the feed
 	if len(feed.Anchor) == 0 {
@@ -193,7 +225,12 @@ func (bot *Bot) Peek(feed *Feed) ([]*reddit.Post, error) {
 	return joined, nil
 }
 
-// Update fetches the reddit API (see bot.Peek(*Feed)) and set the state of the feed
+// Update fetches the reddit API to retrieve all posts newer than the feed's anchor,
+// and then updates the feed's anchor to the newest fetched posts.
+// Feed.Anchor must have at least one element. See bot.Touch(*Feed) .
+// The returned posts are returned in newest-first order. This function may return
+// an empty list without error.
+// Feed.Anchor is not written to in case of any error.
 func (bot *Bot) Update(feed *Feed) ([]*reddit.Post, error) {
 
 	// get posts
