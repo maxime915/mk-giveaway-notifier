@@ -168,8 +168,8 @@ func isGiveaway(title string) bool {
 }
 
 // replyFetchedPosts
-func (b *TelegramNotifier) replyFetchedPosts(m *telegram.Message, fetcher func(*reddit.Feed) ([]*reddit.Post, error)) {
-	b.replyFilteredFetchedPosts(m, isGiveaway, fetcher)
+func (b *TelegramNotifier) replyFetchedPosts(m *telegram.Message, fetcher func(*reddit.Feed) ([]*reddit.Post, error)) error {
+	return b.replyFilteredFetchedPosts(m, isGiveaway, fetcher)
 }
 
 // replyFilteredFetchedPosts creates a reply to the Sender of `m` using posts from
@@ -177,91 +177,132 @@ func (b *TelegramNotifier) replyFetchedPosts(m *telegram.Message, fetcher func(*
 // filter(post) is true.
 // The reply is split into a message per post and a confirmation reply. Each post
 // is formatted to show the title, the author and give a permalink.
-func (b *TelegramNotifier) replyFilteredFetchedPosts(m *telegram.Message, filter func(string) bool, fetcher func(*reddit.Feed) ([]*reddit.Post, error)) {
-	b.Notify(m.Sender, telegram.Typing)
+func (b *TelegramNotifier) replyFilteredFetchedPosts(m *telegram.Message, filter func(string) bool, fetcher func(*reddit.Feed) ([]*reddit.Post, error)) error {
+	err := b.Notify(m.Sender, telegram.Typing)
+	if err != nil {
+		return err
+	}
 
 	feed, ok := b.Listeners[m.Chat.ID]
 	if !ok {
 		b.Send(m.Sender, "you are not subscribed to any feed")
-		return
+		return nil
 	}
 
 	posts, err := fetcher(feed)
 	if err != nil {
 		b.Send(m.Sender, fmt.Sprintf("error while updating feed: %s", err.Error()))
-		return
+		return err
 	}
 
 	if len(posts) == 0 {
 		b.Send(m.Sender, "No post found yet, try again later")
-		return
+		return nil
 	}
 
 	for _, post := range posts {
 		if !filter(post.Title) {
 			continue
 		}
-		b.Send(m.Sender, fmt.Sprintf(
+		_, err = b.Send(m.Sender, fmt.Sprintf(
 			"%s by u/%s\nold.reddit.com%s",
 			post.Title,
 			post.Author,
 			post.Permalink,
 		))
+		if err != nil {
+			b.Send(m.Sender, "Error encountered while trying to send results")
+			return err
+		}
 	}
 
 	b.Send(m.Sender, "And that's it for now!")
+	return nil
 }
 
 // Launch starts the bot and blocks until Stop() is called or the bot
 // receives a message requesting halt.
 func (b *TelegramNotifier) Launch() error {
-	// TODO handle errors
+	errChan := make(chan error, 10)
 
 	b.Handle("/ping", func(m *telegram.Message) {
-		b.Notify(m.Sender, telegram.Typing)
-		b.Send(m.Sender, "Hello World!")
+		err := b.Notify(m.Sender, telegram.Typing)
+		if err != nil {
+			errChan <- err
+			return
+		}
+
+		_, err = b.Send(m.Sender, "Hello World!")
+		if err != nil {
+			errChan <- err
+			return
+		}
 	})
 
 	b.Handle("/subscribe", func(m *telegram.Message) {
-		b.Notify(m.Sender, telegram.Typing)
+		err := b.Notify(m.Sender, telegram.Typing)
+		if err != nil {
+			errChan <- err
+			return
+		}
 
 		feed, err := b.redditBot.NewFeed(subbredit)
 		if err != nil {
 			b.Send(m.Sender, "Internal error: you won't be able to /poll or /update")
+			errChan <- err
 			return
 		}
 
 		added := b.addListeners(m.Chat.ID, feed)
 
 		if added {
-			b.Send(m.Sender, "Noted, you are now listening on mk-giveaway-notifier")
+			_, err = b.Send(m.Sender, "Noted, you are now listening on mk-giveaway-notifier")
 		} else {
-			b.Send(m.Sender, "This is not the bot you are looking for (you already listen to mk-giveaway-notifier)")
-			return
+			_, err = b.Send(m.Sender, "This is not the bot you are looking for (you already listen to mk-giveaway-notifier)")
+		}
+
+		if err != nil {
+			errChan <- err
 		}
 	})
 
 	b.Handle("/unsubscribe", func(m *telegram.Message) {
 		removed := b.removeListener(m.Chat.ID)
+		var err error
+
 		if removed {
-			b.Send(m.Sender, "You are no longer receiving update")
+			_, err = b.Send(m.Sender, "You are no longer receiving update")
 		} else {
-			b.Send(m.Sender, "You are not registered yet")
+			_, err = b.Send(m.Sender, "You are not registered yet")
+		}
+
+		if err != nil {
+			errChan <- err
 		}
 	})
 
 	b.Handle("/kill", func(m *telegram.Message) {
-		b.Delete(m)
+		err := b.Delete(m)
+		if err != nil {
+			errChan <- err
+		}
 		b.Stop()
 	})
 
 	b.Handle("K", func(m *telegram.Message) {
-		b.Delete(m)
+		err := b.Delete(m)
+		if err != nil {
+			errChan <- err
+		}
 		b.Stop()
 	})
 
 	b.Handle("/touch", func(m *telegram.Message) {
-		b.Notify(m.Sender, telegram.Typing)
+		err := b.Notify(m.Sender, telegram.Typing)
+		if err != nil {
+			errChan <- err
+			return
+		}
 
 		feed, ok := b.Listeners[m.Chat.ID]
 		if !ok {
@@ -269,30 +310,53 @@ func (b *TelegramNotifier) Launch() error {
 			return
 		}
 
-		err := b.redditBot.Touch(feed)
+		err = b.redditBot.Touch(feed)
 		if err != nil {
 			b.Send(m.Sender, fmt.Sprintf("error while touch'ing feed: %s", err.Error()))
+			errChan <- err
 		} else {
-			b.Send(m.Sender, "All fine!")
+			_, err = b.Send(m.Sender, "All fine!")
+			if err != nil {
+				errChan <- err
+			}
 		}
 	})
 
 	b.Handle("/update", func(m *telegram.Message) {
-		b.replyFetchedPosts(m, b.redditBot.Update)
+		err := b.replyFetchedPosts(m, b.redditBot.Update)
+		if err != nil {
+			errChan <- err
+		}
 	})
 
 	b.Handle("/peek", func(m *telegram.Message) {
-		b.replyFetchedPosts(m, b.redditBot.Peek)
+		err := b.replyFetchedPosts(m, b.redditBot.Peek)
+		if err != nil {
+			errChan <- err
+		}
 	})
 
 	b.Handle("/poll", func(m *telegram.Message) {
-		b.Send(m.Sender, "unsupported yet")
+		_, err := b.Send(m.Sender, "unsupported yet")
+		if err != nil {
+			errChan <- err
+		}
 	})
 
 	b.Handle(telegram.OnText, func(m *telegram.Message) {
-		b.Send(m.Sender, "I did not quite understand that")
+		_, err := b.Send(m.Sender, "I did not quite understand that")
+		if err != nil {
+			errChan <- err
+		}
 	})
 
-	b.Start()
-	return nil
+	go b.Start()
+
+	select {
+	case err := <-errChan:
+		b.Stop()
+		return err
+	case <-b.done:
+		return nil
+	}
 }
