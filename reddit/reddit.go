@@ -1,3 +1,11 @@
+// reddit handles communication with the Reddit API.
+// To obtain a bot, you can call DefaultBot() which
+// returns a bot without any login information.
+// You can then create a new Feed via the Bot.NewFeed(...string)
+// method for a list of subreddit. This method requires an internet
+// connection to fetch reddit's API and setup then Anchor of the Feed.
+// Feed can be Marshal'ed/Unmarshal'ed although it is not necessary to do
+// it manually : the telegram API does it.
 package reddit
 
 import (

@@ -1,3 +1,9 @@
+// telegram handles the reception/reply of messages.
+// You can create a new bot by providing a valid token to
+// NewTelegramNotifier or you can load one from a save file.
+// The method Stop allow for a graceful shutdown althought it
+// not wait for the bot to shut down before returning : some
+// processing may still be ongoing.
 package telegram
 
 import (

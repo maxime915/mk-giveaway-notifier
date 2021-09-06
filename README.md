@@ -1,4 +1,8 @@
 # mk-giveaway-notifier
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/maxime915/mk-giveaway-notifier.svg)](https://pkg.go.dev/github.com/maxime915/mk-giveaway-notifier)
+<!-- ![AppVeyor](https://img.shields.io/appveyor/build/maxime915/mk-giveaway-notifier) -->
+
 2-in-1 bot to search for giveaway in r/mk and notify me on telegram
 
 # mk-giveaway-notifier/cmd/start-bot

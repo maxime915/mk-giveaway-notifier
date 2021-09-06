@@ -1,3 +1,9 @@
+// start-bot: CLI to launch the telegram & reddit bots.
+// Usage of start-bot:
+//   -path string
+//         Path to load/save the configuration of the bot: if token is given this file will be erased (default "telegram_state.private.json")
+//   -token string
+//         Telegram bot token: if given, a new bot is created and the path is only used to save the configuration
 package main
 
 import (
