@@ -200,10 +200,12 @@ func (b *TelegramNotifier) replyFilteredFetchedPosts(m *telegram.Message, filter
 		return nil
 	}
 
+	count := 0
 	for _, post := range posts {
 		if !filter(post.Title) {
 			continue
 		}
+		count++
 		_, err = b.Send(m.Sender, fmt.Sprintf(
 			"%s by u/%s\nold.reddit.com%s",
 			post.Title,
@@ -216,8 +218,14 @@ func (b *TelegramNotifier) replyFilteredFetchedPosts(m *telegram.Message, filter
 		}
 	}
 
-	b.Send(m.Sender, "And that's it for now!")
-	return nil
+	_, err = b.Send(m.Sender, fmt.Sprintf(
+		"Fetched %d posts from *%s* to *%s*.\n%d of them were giveaway(s).",
+		len(posts),
+		posts[len(posts)-1].Created.Time.Local().Format(time.Stamp),
+		posts[0].Created.Time.Local().Format(time.Stamp),
+		count,
+	), "Markdown")
+	return err
 }
 
 // Launch starts the bot and blocks until Stop() is called or the bot
