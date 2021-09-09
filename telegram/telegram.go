@@ -368,13 +368,6 @@ func (b *TelegramNotifier) Launch() error {
 		}
 	})
 
-	b.Handle(telegram.OnText, func(m *telegram.Message) {
-		_, err := b.Send(m.Sender, "I did not quite understand that")
-		if err != nil {
-			errChan <- err
-		}
-	})
-
 	go b.Start()
 
 	select {
