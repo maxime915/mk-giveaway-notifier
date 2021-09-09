@@ -9,6 +9,7 @@ package telegram
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -352,6 +353,16 @@ func (b *TelegramNotifier) Launch() error {
 
 	b.Handle("/poll", func(m *telegram.Message) {
 		_, err := b.Send(m.Sender, "unsupported yet")
+		if err != nil {
+			errChan <- err
+		}
+	})
+
+	b.Handle("/debug", func(m *telegram.Message) {
+		data, _ := json.Marshal(b.Listeners)
+
+		log.Println(string(data))
+		_, err := b.Send(m.Sender, string(data))
 		if err != nil {
 			errChan <- err
 		}
