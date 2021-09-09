@@ -9,6 +9,8 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
+	"os/signal"
 
 	"github.com/maxime915/mk-giveaway-notifier/telegram"
 )
@@ -24,6 +26,17 @@ func main() {
 		log.Fatalf("invalid path to store the state of the bot")
 	}
 
+	interrupted := make(chan struct{})
+	done := make(chan struct{})
+
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+
+	go func() {
+		<-c
+		close(interrupted)
+	}()
+
 	var bot *telegram.TelegramNotifier
 	var err error
 
@@ -37,9 +50,21 @@ func main() {
 		log.Fatalf("unable to start: %s\nIf you are online, verify the token\n", err.Error())
 	}
 
-	err = bot.Launch()
-	if err != nil {
-		log.Fatalf("internal error: %s\n", err.Error())
+	go func() {
+		err = bot.Launch()
+		if err != nil {
+			log.Fatalf("internal error: %s\n", err.Error())
+		}
+		close(done)
+	}()
+
+	// when interrupted, stop and wait until done
+	// when done, proceed
+	select {
+	case <-interrupted:
+		bot.Stop()
+		<-done
+	case <-done:
 	}
 
 	err = bot.SaveTo(*path)
