@@ -238,7 +238,7 @@ func (b *TelegramNotifier) replyFilteredFetchedPosts(m *telegram.Message, filter
 // Launch starts the bot and blocks until Stop() is called or the bot
 // receives a message requesting halt.
 func (b *TelegramNotifier) Launch() error {
-	errChan := make(chan error, 10)
+	errChan := make(chan error)
 
 	b.Handle("/ping", func(m *telegram.Message) {
 		err := b.Notify(m.Sender, telegram.Typing)
