@@ -11,6 +11,7 @@ package reddit
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -169,42 +170,12 @@ func (bot *Bot) Touch(feed *Feed) error {
 	return nil
 }
 
-// Peek fetches the reddit API to retrieve all posts newer than the feed's anchor.
-// Feed.Anchor must have at least one element. See bot.Touch(*Feed) .
-// The returned posts are returned in newest-first order. This function may return
-// an empty list without error.
-func (bot *Bot) Peek(feed *Feed) ([]*reddit.Post, error) {
-	// if no anchor available, impossible to have a reference in the feed
-	if len(feed.Anchor) == 0 {
-		return nil, fmt.Errorf("unable to crawl with empty ref")
-	}
-
-	// find the first valid saved reference
-	// (references might be deleted between two calls to Update)
-	validIndex := -1
-	for i := range feed.Anchor {
-		if bot.checkPosition(feed.Anchor[i]) {
-			validIndex = i
-			break
-		}
-	}
-
-	// if none found, use time instead
-	if validIndex == -1 {
-		panic("crawl using time not supported yet") // FIXME
-	}
-
-	check := make(map[string]struct{}, len(feed.Anchor))
-	for i := range feed.Anchor {
-		check[feed.Anchor[i].FullID] = struct{}{}
-	}
-
-	before := feed.Anchor[validIndex].FullID
+func (bot *Bot) peekBefore(subreddits, before string) ([]*reddit.Post, error) {
 	result := make(map[int][]*reddit.Post)
 	totalLength := 0
 
 	for {
-		posts, err := bot.newPosts(feed.Subreddits, before, "", 100)
+		posts, err := bot.newPosts(subreddits, before, "", 100)
 
 		if err != nil {
 			return nil, err
@@ -231,6 +202,44 @@ func (bot *Bot) Peek(feed *Feed) ([]*reddit.Post, error) {
 	}
 
 	return joined, nil
+}
+
+// Peek fetches the reddit API to retrieve all posts newer than the feed's anchor.
+// Feed.Anchor must have at least one element. See bot.Touch(*Feed) .
+// The returned posts are returned in newest-first order. This function may return
+// an empty list without error.
+func (bot *Bot) Peek(feed *Feed) ([]*reddit.Post, error) {
+	var results []*reddit.Post
+	var err error
+
+	// if no anchor available, impossible to have a reference in the feed
+	if len(feed.Anchor) == 0 {
+		return nil, fmt.Errorf("unable to crawl with empty ref")
+	}
+
+	// try all anchor points, newest first
+	for _, position := range feed.Anchor {
+		if !bot.checkPosition(position) {
+			log.Printf("invalid index for position %+v\n", position)
+			continue
+		}
+
+		results, err = bot.peekBefore(feed.Subreddits, position.FullID)
+
+		if err != nil {
+			return nil, err
+		}
+
+		if len(results) > 0 {
+			break
+		}
+	}
+
+	if len(results) == 0 {
+		return nil, fmt.Errorf("no post found by ID fetching & time based crawl is not supported yet")
+	}
+
+	return results, nil
 }
 
 // Update fetches the reddit API to retrieve all posts newer than the feed's anchor,
