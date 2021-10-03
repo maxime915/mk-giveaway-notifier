@@ -79,12 +79,12 @@ func (bot Bot) newPosts(subreddit, before, after string, limit int) ([]*reddit.P
 		Limit:  limit,
 	})
 
-	// set ratelimiter with newer information
-	bot.ratelimiter.Update(resp.Rate)
-
 	if err != nil {
 		return nil, err
 	}
+
+	// set ratelimiter with newer information
+	bot.ratelimiter.Update(resp.Rate)
 
 	return posts, nil
 }
