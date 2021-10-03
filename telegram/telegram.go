@@ -337,12 +337,15 @@ func (b *TelegramNotifier) Launch() error {
 		}
 	})
 
-	b.Handle("/update", func(m *telegram.Message) {
+	updateHandle := func(m *telegram.Message) {
 		err := b.replyFetchedPosts(m, b.redditBot.Update)
 		if err != nil {
 			errChan <- err
 		}
-	})
+	}
+
+	b.Handle("/update", updateHandle)
+	b.Handle("/up", updateHandle)
 
 	b.Handle("/peek", func(m *telegram.Message) {
 		err := b.replyFetchedPosts(m, b.redditBot.Peek)
