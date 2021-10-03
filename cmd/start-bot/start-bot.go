@@ -18,6 +18,8 @@ import (
 const savedStatePath = "telegram_state.private.json"
 
 func main() {
+	log.SetFlags(log.LstdFlags | log.Llongfile)
+
 	token := flag.String("token", "", "Telegram bot token: if given, a new bot is created and the path is only used to save the configuration")
 	path := flag.String("path", savedStatePath, "Path to load/save the configuration of the bot: if token is given this file will be erased")
 	flag.Parse()
