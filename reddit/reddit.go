@@ -235,8 +235,9 @@ func (bot *Bot) Peek(feed *Feed) ([]*reddit.Post, error) {
 		}
 	}
 
+	// unable to fetch from the anchor, crawl to saved date instead
 	if len(results) == 0 {
-		return nil, fmt.Errorf("no post found by ID fetching & time based crawl is not supported yet")
+		return bot.crawl(feed)
 	}
 
 	return results, nil
@@ -276,6 +277,68 @@ func (bot *Bot) Update(feed *Feed) ([]*reddit.Post, error) {
 	feed.Anchor = newAnchor
 
 	return posts, nil
+}
+
+func (bot *Bot) crawl(feed *Feed) ([]*reddit.Post, error) {
+	result := make(map[int][]*reddit.Post)
+	totalLength := 0
+
+	// if no anchor available, impossible to have a reference in the feed
+	if len(feed.Anchor) == 0 {
+		return nil, fmt.Errorf("unable to crawl with empty ref")
+	}
+
+	// minimum time of publication as a reference
+	target := minOfAnchor(feed.Anchor)
+	notFound := true
+
+	after := ""
+	for notFound {
+		posts, err := bot.newPosts(feed.Subreddits, "", after, 100)
+
+		if err != nil {
+			return nil, err
+		}
+
+		// should have fetched 100 posts... maybe there was an error?
+		if len(posts) < 5 {
+			return nil, fmt.Errorf("unable to fetch 100 posts")
+		}
+
+		rm := newRollingMedian(posts[:5])
+		if rm.cachedValue.Before(target) {
+			// break -> but save post firsts lmao
+			notFound = false
+			posts = posts[:5]
+			goto save
+		}
+
+		for k := 5; k < len(posts); k++ {
+			if rm.add(posts[k]).Before(target) {
+				// break main loop -> but save post firsts lmao
+				notFound = false
+				posts = posts[:k]
+				goto save
+			}
+		}
+
+	save:
+		// add fetched results to the list
+		result[len(result)] = posts
+		totalLength += len(posts)
+
+		// update reference
+		after = posts[len(posts)-1].FullID
+	}
+
+	// join all slices -> newest post first
+	joined := make([]*reddit.Post, totalLength)
+	low := 0
+	for k := range result {
+		low += copy(joined[low:], result[k])
+	}
+
+	return joined, nil
 }
 
 // Poll fetches the red dit API up to a date (ignoring any state anchor)
