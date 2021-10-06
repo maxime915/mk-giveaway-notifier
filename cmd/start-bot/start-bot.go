@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"github.com/maxime915/mk-giveaway-notifier/telegram"
 )
@@ -29,10 +30,9 @@ func main() {
 	}
 
 	interrupted := make(chan struct{})
-	done := make(chan struct{})
 
 	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt)
+	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
 	go func() {
 		<-c
@@ -52,6 +52,7 @@ func main() {
 		log.Fatalf("unable to start: %s\nIf you are online, verify the token\n", err.Error())
 	}
 
+	done := make(chan struct{})
 	go func() {
 		err = bot.Launch()
 		if err != nil {
@@ -64,8 +65,9 @@ func main() {
 	// when done, proceed
 	select {
 	case <-interrupted:
-		bot.Stop()
-		<-done
+		// NB: if bot wasn't started (e.g.: SIG too early)
+		// bot.Stop() waits forever
+		go bot.Stop()
 	case <-done:
 	}
 
