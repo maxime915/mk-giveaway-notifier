@@ -280,9 +280,6 @@ func (bot *Bot) Update(feed *Feed) ([]*reddit.Post, error) {
 }
 
 func (bot *Bot) crawl(feed *Feed) ([]*reddit.Post, error) {
-	result := make(map[int][]*reddit.Post)
-	totalLength := 0
-
 	// if no anchor available, impossible to have a reference in the feed
 	if len(feed.Anchor) == 0 {
 		return nil, fmt.Errorf("unable to crawl with empty ref")
@@ -290,11 +287,18 @@ func (bot *Bot) crawl(feed *Feed) ([]*reddit.Post, error) {
 
 	// minimum time of publication as a reference
 	target := minOfAnchor(feed.Anchor)
-	notFound := true
 
+	return bot.crawlUntil(target, feed.Subreddits)
+}
+
+func (bot *Bot) crawlUntil(target time.Time, subreddit string) ([]*reddit.Post, error) {
+	result := make(map[int][]*reddit.Post)
+	totalLength := 0
+
+	notFound := true
 	after := ""
 	for notFound {
-		posts, err := bot.newPosts(feed.Subreddits, "", after, 100)
+		posts, err := bot.newPosts(subreddit, "", after, 100)
 
 		if err != nil {
 			return nil, err
