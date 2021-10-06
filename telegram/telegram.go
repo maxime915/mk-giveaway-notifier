@@ -298,7 +298,7 @@ func (b *TelegramNotifier) Launch() error {
 	})
 
 	b.Handle("/kill", func(m *telegram.Message) {
-		err := b.Delete(m)
+		_, err := b.Send(m.Sender, "Goodbye!")
 		if err != nil {
 			errChan <- err
 		}
@@ -306,7 +306,7 @@ func (b *TelegramNotifier) Launch() error {
 	})
 
 	b.Handle("K", func(m *telegram.Message) {
-		err := b.Delete(m)
+		_, err := b.Send(m.Sender, "Goodbye!")
 		if err != nil {
 			errChan <- err
 		}
