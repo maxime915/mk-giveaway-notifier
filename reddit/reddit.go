@@ -48,6 +48,7 @@ type Anchor = []Position
 // you create Feed by hand, you may use Bot.Touch(*Feed) to set their reference
 // to the newest posts.
 type Feed struct {
+	// Anchor is a list of position, with newest posts first
 	Anchor     Anchor `json:"anchor"`
 	Subreddits string `json:"url"`
 }
@@ -142,7 +143,7 @@ func (bot *Bot) NewFeed(subreddits ...string) (*Feed, error) {
 
 // Touch sets the anchor of the feed to the most recents posts of the sub
 func (bot *Bot) Touch(feed *Feed) error {
-	size := 3
+	size := 5
 	if cap(feed.Anchor) > size {
 		size = cap(feed.Anchor)
 	}
@@ -250,7 +251,10 @@ func (bot *Bot) Peek(feed *Feed) ([]*reddit.Post, error) {
 // an empty list without error.
 // Feed.Anchor is not written to in case of any error.
 func (bot *Bot) Update(feed *Feed) ([]*reddit.Post, error) {
+	return bot.UpdateForAnchorSize(feed, len(feed.Anchor))
+}
 
+func (bot *Bot) UpdateForAnchorSize(feed *Feed, anchorSize int) ([]*reddit.Post, error) {
 	// get posts
 	posts, err := bot.Peek(feed)
 	if err != nil {
@@ -258,24 +262,31 @@ func (bot *Bot) Update(feed *Feed) ([]*reddit.Post, error) {
 	}
 
 	// build anchor from fetched posts
-	anchorSize := cap(feed.Anchor)
-	if anchorSize > len(posts) {
-		anchorSize = len(posts)
-	}
 	newAnchor := make([]Position, anchorSize)
-	for i := 0; i < anchorSize; i++ {
+	newEntryCount := anchorSize
+
+	// make sure there are enough post to build the anchor
+	if anchorSize > len(posts) {
+		// old anchor may be used if needed
+		if anchorSize > len(feed.Anchor)+len(posts) {
+			return nil, fmt.Errorf("not enouch post to update the anchor size")
+		}
+		newEntryCount = len(posts)
+	}
+
+	// add newest posts first
+	for i := 0; i < newEntryCount; i++ {
 		newAnchor[i].FullID = posts[i].FullID
 		newAnchor[i].Created = *posts[i].Created
 	}
 
 	// make sure the anchor size does not decrease
-	delta := cap(feed.Anchor) - len(posts)
+	delta := anchorSize - newEntryCount
 	if delta > 0 {
 		newAnchor = append(newAnchor, feed.Anchor[:delta]...)
 	}
 
 	feed.Anchor = newAnchor
-
 	return posts, nil
 }
 
@@ -285,7 +296,7 @@ func (bot *Bot) crawl(feed *Feed) ([]*reddit.Post, error) {
 		return nil, fmt.Errorf("unable to crawl with empty ref")
 	}
 
-	// minimum time of publication as a reference
+	// minimum time of publication as a reference (-> oldest posts)
 	target := minOfAnchor(feed.Anchor)
 
 	return bot.crawlUntil(target, feed.Subreddits)
