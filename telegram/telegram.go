@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -347,6 +348,29 @@ func (b *TelegramNotifier) Launch() error {
 	b.Handle("/update", updateHandle)
 	b.Handle("/up", updateHandle)
 
+	b.Handle("/grow", func(m *telegram.Message) {
+		size, err := strconv.Atoi(m.Payload)
+		if err != nil || size < 1 {
+			_, err := b.Send(m.Sender, "/grow requires postitive size")
+			if err != nil {
+				errChan <- err
+			}
+			return
+		}
+
+		err = b.replyFetchedPosts(m, func(f *reddit.Feed) ([]*reddit.Post, error) {
+			return b.redditBot.UpdateForAnchorSize(f, size)
+		})
+		if err != nil {
+			errChan <- err
+		}
+
+		_, err = b.Send(m.Sender, fmt.Sprintf("Anchor size is now %d", size))
+		if err != nil {
+			errChan <- err
+		}
+	})
+
 	b.Handle("/peek", func(m *telegram.Message) {
 		err := b.replyFetchedPosts(m, b.redditBot.Peek)
 		if err != nil {
@@ -370,6 +394,8 @@ func (b *TelegramNotifier) Launch() error {
 			errChan <- err
 		}
 	})
+
+	// TODO add option to increase/decrease anchor size
 
 	go b.Start()
 
