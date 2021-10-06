@@ -143,32 +143,11 @@ func (bot *Bot) NewFeed(subreddits ...string) (*Feed, error) {
 
 // Touch sets the anchor of the feed to the most recents posts of the sub
 func (bot *Bot) Touch(feed *Feed) error {
-	size := 5
-	if cap(feed.Anchor) > size {
-		size = cap(feed.Anchor)
-	}
-
-	// `size` posts for the anchor is a safe measure
-	posts, err := bot.newPosts(feed.Subreddits, "", "", size)
-	if err != nil {
-		return err
-	}
-
-	if len(posts) < 1 {
-		return fmt.Errorf("not enough posts found in the feed, aborting")
-	}
-
-	// if len(posts) < size
-	// failing is not helping
-
-	// copy the value in the anchor
-	feed.Anchor = make([]Position, len(posts))
-	for i := range posts {
-		feed.Anchor[i].FullID = posts[i].FullID
-		feed.Anchor[i].Created = *posts[i].Created
-	}
-
-	return nil
+	limit := 5
+	_, err := bot.fetchAndUpdateAnchor(feed, limit, func() ([]*reddit.Post, error) {
+		return bot.newPosts(feed.Subreddits, "", "", limit)
+	})
+	return err
 }
 
 func (bot *Bot) peekBefore(subreddits, before string) ([]*reddit.Post, error) {
@@ -255,8 +234,14 @@ func (bot *Bot) Update(feed *Feed) ([]*reddit.Post, error) {
 }
 
 func (bot *Bot) UpdateForAnchorSize(feed *Feed, anchorSize int) ([]*reddit.Post, error) {
+	return bot.fetchAndUpdateAnchor(feed, anchorSize, func() ([]*reddit.Post, error) {
+		return bot.Peek(feed)
+	})
+}
+
+func (bot *Bot) fetchAndUpdateAnchor(feed *Feed, anchorSize int, fetch func() ([]*reddit.Post, error)) ([]*reddit.Post, error) {
 	// get posts
-	posts, err := bot.Peek(feed)
+	posts, err := fetch()
 	if err != nil {
 		return nil, err
 	}
