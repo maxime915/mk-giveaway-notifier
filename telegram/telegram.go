@@ -399,11 +399,12 @@ func (b *TelegramNotifier) Launch() error {
 
 	go b.Start()
 
-	select {
-	case err := <-errChan:
-		b.Stop()
-		return err
-	case <-b.done:
-		return nil
+	for {
+		select {
+		case err := <-errChan:
+			log.Println(err)
+		case <-b.done:
+			return nil
+		}
 	}
 }
