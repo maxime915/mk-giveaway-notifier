@@ -6,6 +6,10 @@
 // processing may still be ongoing.
 package telegram
 
+// FIXME there are thread-safety issues
+// 	- the feed object is never locked on with read & write permitted
+// 	- https://github.com/peterbourgon/diskv might be a better tool for storage
+
 import (
 	"encoding/json"
 	"fmt"
@@ -111,11 +115,17 @@ func LoadTelegramNotifierWithBot(path string, rbot *reddit.Bot) (*TelegramNotifi
 
 // String represent the current state of the TelegramNotifier
 func (tn *TelegramNotifier) String() string {
+	tn.mutex.Lock()
+	defer tn.mutex.Unlock()
+
 	return fmt.Sprintf("%+v", tn.savedState)
 }
 
 // SaveTo prints the configuration of the TelegramNotifier to a file
 func (tn *TelegramNotifier) SaveTo(path string) error {
+	tn.mutex.Lock()
+	defer tn.mutex.Unlock()
+
 	data, err := json.Marshal(tn.savedState)
 	if err != nil {
 		return err
