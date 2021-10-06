@@ -84,7 +84,7 @@ func (rm *rollingMedian) insertPost(post *reddit.Post) *listItem {
 		// insert after at the end
 		rm.tail.next = node
 		node.prev = rm.tail
-		rm.tail = curr
+		rm.tail = node
 	}
 
 	return node
