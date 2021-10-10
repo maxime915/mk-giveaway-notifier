@@ -236,13 +236,32 @@ func (b *TelegramNotifier) replyFilteredFetchedPosts(m *telegram.Message, filter
 		}
 	}
 
-	_, err = b.Send(m.Sender, fmt.Sprintf(
-		"Fetched %d posts from *%s* to *%s*.\n%d of them were giveaway(s).",
-		len(posts),
-		posts[len(posts)-1].Created.Time.Local().Format(time.Stamp),
-		posts[0].Created.Time.Local().Format(time.Stamp),
-		count,
-	), "Markdown")
+	if len(posts) == 1 {
+		comment := "It was not a giveaway."
+		if count > 0 {
+			comment = "It was a giveaway."
+		}
+		_, err = b.Send(m.Sender, fmt.Sprintf(
+			"Fetched 1 post at *%s*.\n%s",
+			posts[0].Created.Time.Local().Format(time.Stamp),
+			comment,
+		), "Markdown")
+	} else {
+		comment := "None of them were giveaways."
+		if count == 1 {
+			comment = "One of them was a giveaway."
+		} else {
+			comment = fmt.Sprintf("%d of them were giveaways.", count)
+		}
+		_, err = b.Send(m.Sender, fmt.Sprintf(
+			"Fetched %d posts from *%s* to *%s*.\n%s",
+			len(posts),
+			posts[len(posts)-1].Created.Time.Local().Format(time.Stamp),
+			posts[0].Created.Time.Local().Format(time.Stamp),
+			comment,
+		), "Markdown")
+	}
+
 	return err
 }
 
