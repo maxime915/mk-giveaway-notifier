@@ -99,7 +99,7 @@ func (bot *Bot) checkPosition(postion Position) bool {
 	return post.Author != "[deleted]"
 }
 
-// Touch sets the anchor of the feed to the most recents posts of the sub
+// Touch sets the anchor of the feed to the most recent posts of the sub
 func (bot *Bot) Touch(feed *Feed) ([]*reddit.Post, error) {
 	limit := 5
 	return bot.fetchAndUpdateAnchor(feed, limit, func() ([]*reddit.Post, error) {
@@ -208,7 +208,7 @@ func (bot *Bot) fetchAndUpdateAnchor(feed *Feed, anchorSize int, fetch func() ([
 	if newEntryCount > len(posts) {
 		// old anchor may be used if needed
 		if newEntryCount > len(feed.Anchor)+len(posts) {
-			return nil, fmt.Errorf("not enouch post to update the anchor size")
+			return nil, fmt.Errorf("not enough post to update the anchor size")
 		}
 		newEntryCount = len(posts)
 	}
@@ -264,7 +264,7 @@ func (bot *Bot) crawlUntil(target time.Time, subreddit string) ([]*reddit.Post, 
 
 		rm := newRollingMedian(posts[:5])
 		if rm.cachedValue.Before(target) {
-			// break -> but save post firsts lmao
+			// break -> but save post firsts
 			notFound = false
 			posts = posts[:5]
 			goto save
@@ -272,7 +272,7 @@ func (bot *Bot) crawlUntil(target time.Time, subreddit string) ([]*reddit.Post, 
 
 		for k := 5; k < len(posts); k++ {
 			if rm.add(posts[k]).Before(target) {
-				// break main loop -> but save post firsts lmao
+				// break main loop -> but save post firsts
 				notFound = false
 				posts = posts[:k]
 				goto save
