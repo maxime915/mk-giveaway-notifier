@@ -25,7 +25,7 @@ import (
 )
 
 // default sub an user is subscribed to
-const subbredit = "MechanicalKeyboards"
+const subreddit = "MechanicalKeyboards"
 
 // savedState represent a configuration of the bot
 type savedState struct {
@@ -291,7 +291,7 @@ func (b *TelegramNotifier) Launch() error {
 			return
 		}
 
-		feed, err := b.redditBot.NewFeed(subbredit)
+		feed, err := b.redditBot.NewFeed(subreddit)
 		if err != nil {
 			b.Send(m.Sender, "Internal error: you won't be able to /poll or /update")
 			errChan <- err
@@ -380,7 +380,7 @@ func (b *TelegramNotifier) Launch() error {
 	b.Handle("/grow", func(m *telegram.Message) {
 		size, err := strconv.Atoi(m.Payload)
 		if err != nil || size < 1 {
-			_, err := b.Send(m.Sender, "/grow requires postitive size")
+			_, err := b.Send(m.Sender, "/grow requires positive size")
 			if err != nil {
 				errChan <- err
 			}
