@@ -123,3 +123,9 @@ func (rm *rollingMedian) cacheValue() time.Time {
 	rm.cachedValue = curr.value.Created.Time
 	return rm.cachedValue
 }
+
+type baseError struct{}
+
+func (baseError) Error() string { return "" }
+
+type EmptyAnchorError struct{ baseError }
