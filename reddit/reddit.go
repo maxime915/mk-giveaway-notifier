@@ -203,18 +203,18 @@ func (bot *Bot) fetchAndUpdateAnchor(feed *Feed, anchorSize int, fetch func() ([
 		return nil, err
 	}
 
-	// build anchor from fetched posts
-	newAnchor := make([]Position, anchorSize)
-	newEntryCount := anchorSize
-
 	// make sure there are enough post to build the anchor
-	if anchorSize > len(posts) {
+	newEntryCount := anchorSize
+	if newEntryCount > len(posts) {
 		// old anchor may be used if needed
-		if anchorSize > len(feed.Anchor)+len(posts) {
+		if newEntryCount > len(feed.Anchor)+len(posts) {
 			return nil, fmt.Errorf("not enouch post to update the anchor size")
 		}
 		newEntryCount = len(posts)
 	}
+
+	// build anchor from fetched posts
+	newAnchor := make([]Position, newEntryCount, anchorSize)
 
 	// add newest posts first
 	for i := 0; i < newEntryCount; i++ {
