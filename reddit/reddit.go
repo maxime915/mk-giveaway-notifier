@@ -100,12 +100,11 @@ func (bot *Bot) checkPosition(postion Position) bool {
 }
 
 // Touch sets the anchor of the feed to the most recents posts of the sub
-func (bot *Bot) Touch(feed *Feed) error {
+func (bot *Bot) Touch(feed *Feed) ([]*reddit.Post, error) {
 	limit := 5
-	_, err := bot.fetchAndUpdateAnchor(feed, limit, func() ([]*reddit.Post, error) {
+	return bot.fetchAndUpdateAnchor(feed, limit, func() ([]*reddit.Post, error) {
 		return bot.newPosts(feed.Subreddits, "", "", limit)
 	})
-	return err
 }
 
 func (bot *Bot) peekBefore(subreddits, before string) ([]*reddit.Post, error) {

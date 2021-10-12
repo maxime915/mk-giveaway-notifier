@@ -347,27 +347,9 @@ func (b *TelegramNotifier) Launch() error {
 	})
 
 	b.Handle("/touch", func(m *telegram.Message) {
-		err := b.Notify(m.Sender, telegram.Typing)
+		err := b.replyFetchedPosts(m, b.redditBot.Touch)
 		if err != nil {
 			errChan <- err
-			return
-		}
-
-		feed, ok := b.Listeners[m.Chat.ID]
-		if !ok {
-			b.Send(m.Sender, "you are not subscribed to any feed")
-			return
-		}
-
-		err = b.redditBot.Touch(feed)
-		if err != nil {
-			b.Send(m.Sender, fmt.Sprintf("error while touch'ing feed: %s", err.Error()))
-			errChan <- err
-		} else {
-			_, err = b.Send(m.Sender, "All fine!")
-			if err != nil {
-				errChan <- err
-			}
 		}
 	})
 

@@ -40,7 +40,7 @@ func (bot *Bot) NewFeed(subreddits ...string) (*Feed, error) {
 
 	feed := &Feed{Subreddits: strings.Join(subreddits, "+")}
 
-	err := bot.Touch(feed)
+	_, err := bot.Touch(feed)
 	if err != nil {
 		return nil, err
 	}
