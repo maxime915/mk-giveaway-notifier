@@ -434,6 +434,55 @@ func (b *TelegramNotifier) Launch() error {
 		}
 	})
 
+	b.Handle("/clearall", func(m *telegram.Message) {
+		b.db.Update(func(t *bolt.Tx) error {
+			bucket := t.Bucket([]byte(bucketName))
+			return bucket.ForEach(func(k, v []byte) error {
+				return bucket.Delete(k)
+			})
+		})
+	})
+
+	b.Handle("/setstate", func(m *telegram.Message) {
+
+		var feed reddit.Feed
+		err := json.Unmarshal([]byte(m.Payload), &feed)
+		if err != nil {
+			_, err = b.Send(m.Sender, fmt.Sprintf("Unable to deserialize Feed: %v", err))
+			if err != nil {
+				errChan <- err
+			}
+			return
+		}
+
+		data, err := json.Marshal(feed)
+		if err != nil {
+			_, _ = b.Send(m.Sender, "Unable to re-serialize feed, see logs")
+			errChan <- err
+			return
+		}
+
+		err = b.db.Update(func(t *bolt.Tx) error {
+			key := make([]byte, 8)
+			binary.BigEndian.PutUint64(key, uint64(m.Chat.ID))
+
+			bucket := t.Bucket([]byte(bucketName))
+
+			return bucket.Put(key, data)
+		})
+
+		if err != nil {
+			_, _ = b.Send(m.Sender, "Unable to store feed in the database, see logs")
+			errChan <- err
+			return
+		}
+
+		_, err = b.Send(m.Sender, "State correctly set without issue!")
+		if err != nil {
+			errChan <- err
+		}
+	})
+
 	go b.Start()
 	b.started = true
 
