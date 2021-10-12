@@ -424,8 +424,6 @@ func (b *TelegramNotifier) Launch() error {
 		}
 	})
 
-	// TODO add option to increase/decrease anchor size
-
 	go b.Start()
 
 	for {
