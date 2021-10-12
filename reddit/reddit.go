@@ -342,6 +342,6 @@ func (bot *Bot) crawlUntil(target time.Time, subreddit string) ([]*reddit.Post, 
 }
 
 // Poll fetches the red dit API up to a date (ignoring any state anchor)
-func (bot *Feed) Poll(feed Feed, duration time.Duration) ([]*reddit.Post, error) {
-	panic("implement me") // FIXME
+func (bot *Bot) Poll(feed *Feed, duration time.Duration) ([]*reddit.Post, error) {
+	return bot.crawlUntil(time.Now().Add(-duration), feed.Subreddits)
 }
