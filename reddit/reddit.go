@@ -177,6 +177,22 @@ func (bot *Bot) Peek(feed *Feed) ([]*reddit.Post, error) {
 		return bot.crawl(feed)
 	}
 
+	// result looks like {optionalNewPost, anchor[0], anchor[1], ...}
+	// if the first anchor failed, it may be in the results but shouldn't be
+	for len(results) > 0 {
+		found := false
+		for i := range feed.Anchor {
+			if results[len(results)-1].FullID == feed.Anchor[i].FullID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			break
+		}
+		results = results[:len(results)-1]
+	}
+
 	return results, nil
 }
 
