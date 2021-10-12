@@ -151,7 +151,7 @@ func (bot *Bot) Peek(feed *Feed) ([]*reddit.Post, error) {
 
 	// if no anchor available, impossible to have a reference in the feed
 	if len(feed.Anchor) == 0 {
-		return nil, fmt.Errorf("unable to crawl with empty ref")
+		return nil, fmt.Errorf("unable to fetch posts without a valid anchor")
 	}
 
 	// try all anchor points, newest first
@@ -235,7 +235,7 @@ func (bot *Bot) fetchAndUpdateAnchor(feed *Feed, anchorSize int, fetch func() ([
 func (bot *Bot) crawl(feed *Feed) ([]*reddit.Post, error) {
 	// if no anchor available, impossible to have a reference in the feed
 	if len(feed.Anchor) == 0 {
-		return nil, fmt.Errorf("unable to crawl with empty ref")
+		return nil, fmt.Errorf("unable to fetch posts without a valid anchor")
 	}
 
 	// minimum time of publication as a reference (-> oldest posts)
