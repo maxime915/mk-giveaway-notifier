@@ -16,42 +16,36 @@ import (
 	"github.com/maxime915/mk-giveaway-notifier/telegram"
 )
 
-const savedStatePath = "telegram_state.private.json"
-
 func main() {
 	log.SetFlags(log.LstdFlags | log.Llongfile)
 
-	token := flag.String("token", "", "Telegram bot token: if given, a new bot is created and the path is only used to save the configuration")
-	path := flag.String("path", savedStatePath, "Path to load/save the configuration of the bot: if token is given this file will be erased")
+	token := flag.String("token", "", "Telegram token (required)")
+	path := flag.String("db", "", "Path to the database file (required, will be created if file doesn't exist)")
 	flag.Parse()
 
 	if len(*path) == 0 {
-		log.Fatalf("invalid path to store the state of the bot")
+		log.Fatal("database file store is required")
+	}
+	if len(*token) == 0 {
+		log.Fatal("telegram token is required")
 	}
 
+	// listen to interrupts
 	interrupted := make(chan struct{})
-
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
-
 	go func() {
 		<-c
 		close(interrupted)
 	}()
 
-	var bot *telegram.TelegramNotifier
-	var err error
-
-	if len(*token) > 0 {
-		bot, err = telegram.NewTelegramNotifier(*token)
-	} else {
-		bot, err = telegram.LoadTelegramNotifier(*path)
-	}
-
+	// bot creation
+	bot, err := telegram.NewTelegramNotifier(*token, *path)
 	if err != nil {
 		log.Fatalf("unable to start: %s\nIf you are online, verify the token\n", err.Error())
 	}
 
+	// start telegram bot
 	done := make(chan struct{})
 	go func() {
 		err = bot.Launch()
@@ -67,11 +61,5 @@ func main() {
 	case <-interrupted:
 		bot.Stop()
 	case <-done:
-	}
-
-	err = bot.SaveTo(*path)
-	if err != nil {
-		log.Fatalf("internal error while trying to save state: %s\n"+
-			"state to save: %s\n", err.Error(), bot.String())
 	}
 }

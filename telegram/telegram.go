@@ -6,62 +6,50 @@
 // processing may still be ongoing.
 package telegram
 
-// FIXME there are thread-safety issues
-// 	- the feed object is never locked on with read & write permitted
-// 	- https://github.com/peterbourgon/diskv might be a better tool for storage
-
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"strconv"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/maxime915/mk-giveaway-notifier/reddit"
+	bolt "go.etcd.io/bbolt"
 	telegram "gopkg.in/tucnak/telebot.v2"
 )
 
 // default sub an user is subscribed to
-const subreddit = "MechanicalKeyboards"
-
-// savedState represent a configuration of the bot
-type savedState struct {
-	Token     string                 `json:"token"`
-	Listeners map[int64]*reddit.Feed `json:"listener"`
-}
+const (
+	subreddit  = "MechanicalKeyboards"
+	bucketName = "main-bucket" // one global bucket
+)
 
 // TelegramNotifier
 type TelegramNotifier struct {
 	*telegram.Bot
 	redditBot *reddit.Bot
-	savedState
-	mutex   *sync.Mutex
-	done    chan struct{}
-	started bool
+	db        *bolt.DB
+	done      chan struct{}
+	started   bool
 }
 
-// newEmptyBot returns a new empty bot with valid mutex/done/Listeners using
-// the default configuration to talk with reddit API.
+// newEmptyBot returns a new empty bot (properties to be filled up)
 func newEmptyBot() *TelegramNotifier {
 	return &TelegramNotifier{
-		savedState: savedState{Listeners: make(map[int64]*reddit.Feed)},
-		mutex:      &sync.Mutex{},
-		done:       make(chan struct{}), // dead channel
-		started:    false,
+		done:    make(chan struct{}), // dead channel
+		started: false,
 	}
 }
 
 // NewTelegramNotifier returns a valid TelegramNotifier with the given token
-func NewTelegramNotifier(Token string) (*TelegramNotifier, error) {
-	return NewTelegramNotifierWithBot(Token, reddit.DefaultBot())
+func NewTelegramNotifier(Token, DBPath string) (*TelegramNotifier, error) {
+	return NewTelegramNotifierWithBot(Token, DBPath, reddit.DefaultBot())
 }
 
 // NewTelegramNotifierWithBot returns a valid TelegramNotifier with the given token
 // and using the given bot to call the reddit API.
-func NewTelegramNotifierWithBot(Token string, rbot *reddit.Bot) (*TelegramNotifier, error) {
+func NewTelegramNotifierWithBot(Token, DBPath string, redditBot *reddit.Bot) (*TelegramNotifier, error) {
 	bot, err := telegram.NewBot(telegram.Settings{
 		Token:  Token,
 		Poller: &telegram.LongPoller{Timeout: 30 * time.Second},
@@ -73,95 +61,89 @@ func NewTelegramNotifierWithBot(Token string, rbot *reddit.Bot) (*TelegramNotifi
 
 	tgBot := newEmptyBot()
 	tgBot.Bot = bot
-	tgBot.redditBot = rbot
-	tgBot.savedState.Token = Token
+	tgBot.redditBot = redditBot
+	tgBot.db, err = bolt.Open(DBPath, 0666, nil)
 
-	return tgBot, nil
-}
-
-// LoadTelegramNotifier creates a bot from the configuration file using the default
-// bot to communicate with reddit API.
-func LoadTelegramNotifier(path string) (*TelegramNotifier, error) {
-	return LoadTelegramNotifierWithBot(path, reddit.DefaultBot())
-}
-
-// LoadTelegramNotifierWithBot creates a bot from the configuration file using
-// the given bot to communicate with reddit AOU
-func LoadTelegramNotifierWithBot(path string, rbot *reddit.Bot) (*TelegramNotifier, error) {
-	tgBot := newEmptyBot()
-
-	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-
-	// sets Token & listeners
-	err = json.Unmarshal(data, &tgBot.savedState)
-	if err != nil {
-		return nil, err
-	}
-
-	bot, err := telegram.NewBot(telegram.Settings{
-		Token:  tgBot.savedState.Token,
-		Poller: &telegram.LongPoller{Timeout: 30 * time.Second},
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	tgBot.Bot = bot
-	tgBot.redditBot = rbot
 
 	return tgBot, nil
 }
 
 // String represent the current state of the TelegramNotifier
-func (tn *TelegramNotifier) String() string {
-	tn.mutex.Lock()
-	defer tn.mutex.Unlock()
+func (b *TelegramNotifier) String() string {
+	data := make(map[int64]*reddit.Feed)
 
-	return fmt.Sprintf("%+v", tn.savedState)
-}
+	err := b.db.View(func(t *bolt.Tx) error {
+		bucket := t.Bucket([]byte(bucketName))
 
-// SaveTo prints the configuration of the TelegramNotifier to a file
-func (tn *TelegramNotifier) SaveTo(path string) error {
-	tn.mutex.Lock()
-	defer tn.mutex.Unlock()
+		cursor := bucket.Cursor()
+		for k, v := cursor.First(); k != nil; k, v = cursor.Next() {
+			key := int64(binary.BigEndian.Uint64(k))
 
-	data, err := json.Marshal(tn.savedState)
+			var feed *reddit.Feed
+			err := json.Unmarshal(v, &feed)
+			if err != nil {
+				return err
+			}
+
+			data[key] = feed
+		}
+		return nil
+	})
+
 	if err != nil {
-		return err
+		log.Println(err)
+		return "A TelegramNotifier with a least 1 error (see logs.)"
 	}
 
-	return os.WriteFile(path, data, 0777)
+	payload, err := json.Marshal(data)
+	if err != nil {
+		log.Println(err)
+		return "A TelegramNotifier with a least 1 error (see logs.)"
+	}
+
+	return string(payload)
 }
 
 // add one chat to the listeners, returns false if the chat is already listening
-func (b *TelegramNotifier) addListeners(chatID int64, feed *reddit.Feed) bool {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
+func (b *TelegramNotifier) addListeners(chatID int64, feed *reddit.Feed) error {
+	return b.db.Update(func(t *bolt.Tx) error {
+		key := make([]byte, 8)
+		binary.BigEndian.PutUint64(key, uint64(chatID))
 
-	// avoid duplicate messages by keeping the list unique
-	if _, ok := b.Listeners[chatID]; ok {
-		return false
-	}
+		bucket := t.Bucket([]byte(bucketName))
 
-	b.Listeners[chatID] = feed
-	return true
+		data, err := json.Marshal(feed)
+		if err != nil {
+			return err
+		}
+
+		if check := bucket.Get(key); check != nil {
+			return KeyExistError{}
+		}
+
+		err = bucket.Put(key, data)
+
+		return err
+	})
 }
 
 // remove on chat from the listeners, returns false if chat was not listening
-func (b *TelegramNotifier) removeListener(chatID int64) bool {
-	b.mutex.Lock()
-	defer b.mutex.Unlock()
+func (b *TelegramNotifier) removeListener(chatID int64) error {
+	return b.db.Update(func(t *bolt.Tx) error {
+		key := make([]byte, 8)
+		binary.BigEndian.PutUint64(key, uint64(chatID))
 
-	// make sure the key exist
-	if _, ok := b.Listeners[chatID]; !ok {
-		return false
-	}
+		bucket := t.Bucket([]byte(bucketName))
 
-	delete(b.Listeners, chatID)
-	return true
+		if check := bucket.Get(key); check == nil {
+			return KeyNotFoundError{}
+		}
+
+		return bucket.Delete(key)
+	})
 }
 
 // Stop makes the bot stop listening to Telegram API. Ongoing requests will continue
@@ -185,10 +167,6 @@ func (b *TelegramNotifier) BlockUntilKilled() {
 	<-b.done
 }
 
-func isGiveaway(title string) bool {
-	return strings.Contains(strings.ToLower(title), "giveaway")
-}
-
 // replyFetchedPosts
 func (b *TelegramNotifier) replyFetchedPosts(m *telegram.Message, fetcher func(*reddit.Feed) ([]*reddit.Post, error)) error {
 	return b.replyFilteredFetchedPosts(m, isGiveaway, fetcher)
@@ -205,16 +183,52 @@ func (b *TelegramNotifier) replyFilteredFetchedPosts(m *telegram.Message, filter
 		return err
 	}
 
-	feed, ok := b.Listeners[m.Chat.ID]
-	if !ok {
-		b.Send(m.Sender, "you are not subscribed to any feed")
-		return nil
-	}
+	var posts []*reddit.Post = nil
 
-	posts, err := fetcher(feed)
-	if err != nil {
+	err = b.db.Update(func(t *bolt.Tx) error {
+		key := make([]byte, 8)
+		binary.BigEndian.PutUint64(key, uint64(m.Chat.ID))
+
+		bucket := t.Bucket([]byte(bucketName))
+
+		data := bucket.Get(key)
+
+		if key == nil {
+			return KeyNotFoundError{}
+		}
+
+		var feed *reddit.Feed
+		err = json.Unmarshal(data, &feed)
+
+		if err != nil {
+			return err
+		}
+
+		posts, err = fetcher(feed)
+		if err != nil {
+			return err
+		}
+
+		// fetcher may have modified feed, the new value should be stored
+		data, err = json.Marshal(feed)
+		if err != nil {
+			return err
+		}
+
+		return bucket.Put(key, data)
+	})
+
+	switch err.(type) {
+	case KeyNotFoundError:
+		b.Send(m.Sender, "You are not subscribed to any feed.")
+		return nil
+	case reddit.EmptyAnchorError:
+		b.Send(m.Sender, "The feed has no anchor, /touch it before fetching it")
+		return nil
+	default:
 		b.Send(m.Sender, fmt.Sprintf("error while updating feed: %s", err.Error()))
 		return err
+	case nil:
 	}
 
 	if len(posts) == 0 {
@@ -274,6 +288,14 @@ func (b *TelegramNotifier) replyFilteredFetchedPosts(m *telegram.Message, filter
 func (b *TelegramNotifier) Launch() error {
 	errChan := make(chan error)
 
+	// create a global bucket
+	if err := b.db.Update(func(t *bolt.Tx) error {
+		_, err := t.CreateBucketIfNotExists([]byte(bucketName))
+		return err
+	}); err != nil {
+		return err
+	}
+
 	b.Handle("/ping", func(m *telegram.Message) {
 		err := b.Notify(m.Sender, telegram.Typing)
 		if err != nil {
@@ -297,17 +319,19 @@ func (b *TelegramNotifier) Launch() error {
 
 		feed, err := b.redditBot.NewFeed(subreddit)
 		if err != nil {
-			b.Send(m.Sender, "Internal error: you won't be able to /poll or /update")
+			b.Send(m.Sender, "Internal error, please re-try later (is your internet connection ok?)")
 			errChan <- err
 			return
 		}
 
-		added := b.addListeners(m.Chat.ID, feed)
-
-		if added {
-			_, err = b.Send(m.Sender, "Noted, you are now listening on mk-giveaway-notifier")
-		} else {
-			_, err = b.Send(m.Sender, "This is not the bot you are looking for (you already listen to mk-giveaway-notifier)")
+		err = b.addListeners(m.Chat.ID, feed)
+		switch err.(type) {
+		case nil:
+			_, err = b.Send(m.Sender, "Noted, you are now listening on mk-giveaway-notifier.")
+		case KeyExistError:
+			_, err = b.Send(m.Sender, "You already listen to mk-giveaway-notifier.")
+		default:
+			b.Send(m.Sender, "Unable to subscribe, see logs for detail.")
 		}
 
 		if err != nil {
@@ -316,12 +340,12 @@ func (b *TelegramNotifier) Launch() error {
 	})
 
 	b.Handle("/unsubscribe", func(m *telegram.Message) {
-		removed := b.removeListener(m.Chat.ID)
-		var err error
+		err := b.removeListener(m.Chat.ID)
 
-		if removed {
+		switch err.(type) {
+		case nil:
 			_, err = b.Send(m.Sender, "You are no longer receiving update")
-		} else {
+		case KeyNotFoundError:
 			_, err = b.Send(m.Sender, "You are not registered yet")
 		}
 
@@ -401,10 +425,10 @@ func (b *TelegramNotifier) Launch() error {
 	})
 
 	b.Handle("/debug", func(m *telegram.Message) {
-		data, _ := json.Marshal(b.Listeners)
+		message := b.String()
 
-		log.Println(string(data))
-		_, err := b.Send(m.Sender, string(data))
+		log.Println(message)
+		_, err := b.Send(m.Sender, message)
 		if err != nil {
 			errChan <- err
 		}
