@@ -38,8 +38,9 @@ type TelegramNotifier struct {
 	*telegram.Bot
 	redditBot *reddit.Bot
 	savedState
-	mutex *sync.Mutex
-	done  chan struct{}
+	mutex   *sync.Mutex
+	done    chan struct{}
+	started bool
 }
 
 // newEmptyBot returns a new empty bot with valid mutex/done/Listeners using
@@ -49,6 +50,7 @@ func newEmptyBot() *TelegramNotifier {
 		savedState: savedState{Listeners: make(map[int64]*reddit.Feed)},
 		mutex:      &sync.Mutex{},
 		done:       make(chan struct{}), // dead channel
+		started:    false,
 	}
 }
 
@@ -165,7 +167,9 @@ func (b *TelegramNotifier) removeListener(chatID int64) bool {
 // Stop makes the bot stop listening to Telegram API. Ongoing requests will continue
 // processing.
 func (b *TelegramNotifier) Stop() {
-	b.Bot.Stop()
+	if b.started {
+		b.Bot.Stop()
+	}
 	close(b.done)
 }
 
@@ -425,6 +429,7 @@ func (b *TelegramNotifier) Launch() error {
 	})
 
 	go b.Start()
+	b.started = true
 
 	for {
 		select {

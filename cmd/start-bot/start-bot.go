@@ -65,9 +65,7 @@ func main() {
 	// when done, proceed
 	select {
 	case <-interrupted:
-		// NB: if bot wasn't started (e.g.: SIG too early)
-		// bot.Stop() waits forever
-		go bot.Stop()
+		bot.Stop()
 	case <-done:
 	}
 
